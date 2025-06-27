@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Node.js
+react-app/node_modules/
+react-app/build/
+react-app/package-lock.json
+
+# ESP-IDF build artifacts
+build/
