@@ -1,0 +1,114 @@
+name: Build ESP32 Redialer
+
+on:
+  push:
+    branches:
+      - main # Trigger on pushes to the main branch
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # --- Build React Application ---
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18' # Use a Node.js version compatible with your React app
+
+    - name: Install React app dependencies
+      run: npm install
+      working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
+
+    - name: Build React app
+      run: npm run build
+      working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
+
+    # --- Prepare ESP32 Firmware Build Environment ---
+    - name: Set up ESP-IDF
+      uses: espressif/idf-action@v1.2.0 # Use the official ESP-IDF action
+      with:
+        idf-version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
+        tools: 'idf, python, git, cmake, ninja' # Ensure necessary tools are installed
+        # The 'path' input here sets the working directory for idf.py commands
+        path: './esp32-firmware'
+
+    # --- Copy React Build to ESP32 SPIFFS directory ---
+    - name: Create ESP32 SPIFFS directory
+      run: mkdir -p ./esp32-firmware/spiffs
+
+    - name: Copy React build files to ESP32 SPIFFS directory
+      run: |
+        cp -r ./react-app/build/* ./esp32-firmware/spiffs/
+        echo "Copied React build files to ESP32 SPIFFS directory."
+        ls -R ./esp32-firmware/spiffs/ # List contents for verification
+
+    # --- Build ESP32 Firmware and SPIFFS Image ---
+    - name: Build ESP32 firmware
+      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
+      run: idf.py build
+
+    - name: Build SPIFFS image
+      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
+      run: idf.py build-spiffs
+
+    # --- Generate Combined Flashable Image ---
+    - name: Create combined flashable binary
+      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
+      run: |
+        # Get partition table info to determine offsets
+        # This step assumes a standard 4MB flash layout or similar.
+        # Adjust offsets if your partition table is significantly different.
+        # You can inspect build/flasher_args.json or build/flash_project_args for exact offsets.
+        
+        # Example offsets (adjust based on your partitions.csv and build output)
+        # NVS: 0x9000
+        # Factory App (app0): 0x10000
+        # SPIFFS: 0x190000 (example, check your partitions.csv)
+
+        # Ensure these paths and offsets match your project's build output
+        ESP_TOOL="esptool.py" # Assumes esptool.py is in PATH from idf-action
+        CHIP="esp32" # Or esp32s2, esp32c3, etc. if using a different chip
+
+        # Path to generated binaries (relative to esp32-firmware directory)
+        BOOTLOADER_BIN="build/bootloader/bootloader.bin"
+        PARTITIONS_BIN="build/partitions_singleapp.bin" # Or partitions.bin if not using single_app
+        APP_BIN="build/esp32-firmware.bin" # Replace with your project's main app binary name (e.g., build/my_redial_project.bin)
+        SPIFFS_IMG="build/spiffs.bin"
+        NVS_DATA_BIN="build/nvs_data.bin" # NVS data might be generated during build, or default to empty
+
+        # Define flash offsets based on your partitions.csv
+        # Check your build/flasher_args.json after a local build for precise offsets
+        NVS_OFFSET="0x9000"
+        BOOTLOADER_OFFSET="0x1000" # Standard bootloader offset
+        PARTITIONS_OFFSET="0x8000" # Standard partitions offset
+        APP_OFFSET="0x10000" # Standard app offset
+        SPIFFS_OFFSET="0x190000" # Example SPIFFS offset, MUST match your partitions.csv
+
+        # Merge all binaries into a single flashable image
+        ${ESP_TOOL} --chip ${CHIP} merge_bin \
+          -o "flash_image_combined.bin" \
+          --flash_mode dio \
+          --flash_freq 40m \
+          --flash_size 4MB \
+          ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
+          ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
+          ${APP_OFFSET} ${APP_BIN} \
+          ${NVS_OFFSET} ${NVS_DATA_BIN} \
+          ${SPIFFS_OFFSET} ${SPIFFS_IMG}
+        
+        echo "Combined flashable binary created: flash_image_combined.bin"
+
+    # --- Upload Build Artifacts ---
+    - name: Upload ESP32 binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: esp32-redialer-firmware
+        path: |
+          ./esp32-firmware/build/*.bin
+          ./esp32-firmware/flash_image_combined.bin
+        retention-days: 7 # Keep artifacts for 7 days
