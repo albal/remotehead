@@ -1,0 +1,225 @@
+import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import App from './App';
+
+// Mock fetch globally
+global.fetch = jest.fn();
+
+describe('App Component', () => {
+  beforeEach(() => {
+    fetch.mockClear();
+    
+    // Default mock response
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: false,
+        wifi_mode: 'AP',
+        ip_address: '192.168.4.1',
+        auto_redial_enabled: false,
+        redial_period: 60,
+        message: 'ESP32 Bluetooth disconnected.'
+      })
+    });
+  });
+
+  test('renders main UI elements', async () => {
+    render(<App />);
+    
+    // Wait for component to load
+    await waitFor(() => {
+      expect(screen.getByText('ESP32 Headset Controller')).toBeInTheDocument();
+    });
+    
+    expect(screen.getByLabelText(/Current ESP32 IP Address/i)).toBeInTheDocument();
+    expect(screen.getByText('Configure Home Wi-Fi')).toBeInTheDocument();
+    expect(screen.getByText('Automatic Redial Settings')).toBeInTheDocument();
+    expect(screen.getByText('Redial Last Number')).toBeInTheDocument();
+    expect(screen.getByText('Dial')).toBeInTheDocument();
+  });
+
+  test('displays status information correctly', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('AP')).toBeInTheDocument();
+      expect(screen.getByText('Disconnected from Phone')).toBeInTheDocument();
+    });
+  });
+
+  test('allows IP address input changes', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('192.168.4.1')).toBeInTheDocument();
+    });
+
+    const ipInput = screen.getByLabelText(/Current ESP32 IP Address/i);
+    
+    await user.clear(ipInput);
+    await user.type(ipInput, '192.168.1.100');
+    
+    expect(ipInput).toHaveValue('192.168.1.100');
+  });
+
+  test('makes initial status API call', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.4.1/status', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    });
+  });
+
+  test('handles successful WiFi configuration', async () => {
+    const user = userEvent.setup();
+    
+    // Mock successful configuration response
+    fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          bluetooth_connected: false,
+          wifi_mode: 'AP',
+          ip_address: '192.168.4.1',
+          auto_redial_enabled: false,
+          redial_period: 60,
+          message: 'ESP32 Bluetooth disconnected.'
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ message: 'Wi-Fi configured successfully' })
+      });
+
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('ESP32 Headset Controller')).toBeInTheDocument();
+    });
+
+    const ssidInput = screen.getByLabelText(/Home Wi-Fi SSID/i);
+    const passwordInput = screen.getByLabelText(/Home Wi-Fi Password/i);
+    const configureButton = screen.getByText('Configure ESP32 Wi-Fi');
+    
+    await user.type(ssidInput, 'TestNetwork');
+    await user.type(passwordInput, 'testpassword');
+    await user.click(configureButton);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.4.1/configure_wifi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid: 'TestNetwork', password: 'testpassword' }),
+      });
+    });
+  });
+
+  test('disables controls in AP mode', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('AP')).toBeInTheDocument();
+    });
+
+    const redialButton = screen.getByText('Redial Last Number');
+    const dialButton = screen.getByText('Dial');
+    const phoneInput = screen.getByPlaceholderText(/e.g., \+447911123456/i);
+    const autoRedialCheckbox = screen.getByLabelText(/Enable Automatic Redial/i);
+
+    expect(redialButton).toBeDisabled();
+    expect(dialButton).toBeDisabled();
+    expect(phoneInput).toBeDisabled();
+    expect(autoRedialCheckbox).toBeDisabled();
+  });
+
+  test('enables controls when bluetooth connected in STA mode', async () => {
+    // Mock response for STA mode with bluetooth connected
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: false,
+        redial_period: 60,
+        message: 'ESP32 connected.'
+      })
+    });
+
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('STA')).toBeInTheDocument();
+      expect(screen.getByText('Connected to Phone')).toBeInTheDocument();
+    });
+
+    const redialButton = screen.getByText('Redial Last Number');
+    const phoneInput = screen.getByPlaceholderText(/e.g., \+447911123456/i);
+    const autoRedialCheckbox = screen.getByLabelText(/Enable Automatic Redial/i);
+
+    expect(redialButton).not.toBeDisabled();
+    expect(phoneInput).not.toBeDisabled();
+    expect(autoRedialCheckbox).not.toBeDisabled();
+  });
+
+  test('handles API errors gracefully', async () => {
+    fetch.mockResolvedValue({
+      ok: false,
+      statusText: 'Internal Server Error',
+      json: async () => ({ error: 'Something went wrong' })
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Error sending "status" command/i)).toBeInTheDocument();
+    });
+  });
+
+  test('handles network errors gracefully', async () => {
+    fetch.mockRejectedValue(new Error('Network error'));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network error for "status"/i)).toBeInTheDocument();
+    });
+  });
+
+  test('displays connection status badges correctly', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      // Check that status badges are displayed
+      expect(screen.getByText('AP')).toBeInTheDocument();
+      expect(screen.getByText('Disconnected from Phone')).toBeInTheDocument();
+      expect(screen.getByText('Yes')).toBeInTheDocument(); // App connected to ESP32
+    });
+  });
+
+  test('renders WiFi configuration form', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Home Wi-Fi SSID/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Home Wi-Fi Password/i)).toBeInTheDocument();
+      expect(screen.getByText('Configure ESP32 Wi-Fi')).toBeInTheDocument();
+    });
+  });
+
+  test('renders automatic redial settings', async () => {
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Enable Automatic Redial/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Redial Period \(seconds\)/i)).toBeInTheDocument();
+    });
+  });
+});

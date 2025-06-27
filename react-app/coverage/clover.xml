@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1751051107799" clover="3.2.0">
+  <project timestamp="1751051107799" name="All files">
+    <metrics statements="75" coveredstatements="55" conditionals="49" coveredconditionals="38" methods="14" coveredmethods="9" elements="138" coveredelements="102" complexity="0" loc="75" ncloc="75" packages="1" files="2" classes="2"/>
+    <file name="App.js" path="/home/runner/work/remotehead/remotehead/react-app/src/App.js">
+      <metrics statements="73" coveredstatements="55" conditionals="49" coveredconditionals="38" methods="14" coveredmethods="9"/>
+      <line num="4" count="1" type="stmt"/>
+      <line num="6" count="95" type="stmt"/>
+      <line num="7" count="95" type="stmt"/>
+      <line num="8" count="95" type="stmt"/>
+      <line num="9" count="95" type="stmt"/>
+      <line num="10" count="95" type="stmt"/>
+      <line num="11" count="95" type="stmt"/>
+      <line num="12" count="95" type="stmt"/>
+      <line num="13" count="95" type="stmt"/>
+      <line num="16" count="95" type="stmt"/>
+      <line num="17" count="95" type="stmt"/>
+      <line num="20" count="95" type="cond" truecount="2" falsecount="0"/>
+      <line num="21" count="29" type="stmt"/>
+      <line num="22" count="29" type="stmt"/>
+      <line num="23" count="29" type="stmt"/>
+      <line num="24" count="29" type="stmt"/>
+      <line num="30" count="29" type="cond" truecount="2" falsecount="0"/>
+      <line num="31" count="1" type="stmt"/>
+      <line num="34" count="29" type="stmt"/>
+      <line num="35" count="28" type="stmt"/>
+      <line num="37" count="28" type="cond" truecount="2" falsecount="0"/>
+      <line num="38" count="27" type="cond" truecount="1" falsecount="1"/>
+      <line num="39" count="27" type="cond" truecount="2" falsecount="0"/>
+      <line num="40" count="26" type="stmt"/>
+      <line num="41" count="26" type="stmt"/>
+      <line num="42" count="26" type="stmt"/>
+      <line num="43" count="26" type="stmt"/>
+      <line num="44" count="26" type="stmt"/>
+      <line num="46" count="26" type="cond" truecount="4" falsecount="0"/>
+      <line num="47" count="2" type="stmt"/>
+      <line num="49" count="1" type="cond" truecount="1" falsecount="1"/>
+      <line num="51" count="1" type="stmt"/>
+      <line num="52" count="1" type="stmt"/>
+      <line num="53" count="1" type="stmt"/>
+      <line num="56" count="1" type="cond" truecount="1" falsecount="1"/>
+      <line num="57" count="1" type="stmt"/>
+      <line num="60" count="1" type="stmt"/>
+      <line num="61" count="1" type="stmt"/>
+      <line num="66" count="95" type="stmt"/>
+      <line num="67" count="0" type="stmt"/>
+      <line num="71" count="95" type="stmt"/>
+      <line num="72" count="0" type="cond" truecount="0" falsecount="2"/>
+      <line num="73" count="0" type="stmt"/>
+      <line num="74" count="0" type="stmt"/>
+      <line num="76" count="0" type="stmt"/>
+      <line num="80" count="95" type="stmt"/>
+      <line num="81" count="1" type="cond" truecount="1" falsecount="1"/>
+      <line num="82" count="0" type="stmt"/>
+      <line num="83" count="0" type="stmt"/>
+      <line num="85" count="1" type="stmt"/>
+      <line num="92" count="95" type="stmt"/>
+      <line num="93" count="0" type="stmt"/>
+      <line num="94" count="0" type="stmt"/>
+      <line num="95" count="0" type="stmt"/>
+      <line num="102" count="95" type="stmt"/>
+      <line num="103" count="0" type="stmt"/>
+      <line num="104" count="0" type="cond" truecount="0" falsecount="2"/>
+      <line num="105" count="0" type="stmt"/>
+      <line num="108" count="0" type="stmt"/>
+      <line num="109" count="0" type="stmt"/>
+      <line num="112" count="0" type="cond" truecount="0" falsecount="2"/>
+      <line num="113" count="0" type="stmt"/>
+      <line num="121" count="95" type="stmt"/>
+      <line num="122" count="28" type="stmt"/>
+      <line num="126" count="95" type="stmt"/>
+      <line num="127" count="28" type="stmt"/>
+      <line num="128" count="28" type="stmt"/>
+      <line num="129" count="28" type="stmt"/>
+      <line num="132" count="95" type="stmt"/>
+      <line num="149" count="14" type="stmt"/>
+      <line num="185" count="11" type="stmt"/>
+      <line num="198" count="12" type="stmt"/>
+      <line num="266" count="0" type="stmt"/>
+    </file>
+    <file name="index.js" path="/home/runner/work/remotehead/remotehead/react-app/src/index.js">
+      <metrics statements="2" coveredstatements="0" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
+      <line num="6" count="0" type="stmt"/>
+      <line num="7" count="0" type="stmt"/>
+    </file>
+  </project>
+</coverage>
