@@ -50,10 +50,12 @@ jobs:
     - name: Build ESP32 firmware
       # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
       run: idf.py build
+      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
 
     - name: Build SPIFFS image
       # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
       run: idf.py build-spiffs
+      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
 
     # --- Generate Combined Flashable Image ---
     - name: Create combined flashable binary
@@ -98,6 +100,7 @@ jobs:
           ${SPIFFS_OFFSET} ${SPIFFS_IMG}
         
         echo "Combined flashable binary created: flash_image_combined.bin"
+      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
 
     # --- Upload Build Artifacts ---
     - name: Upload ESP32 binaries
