@@ -1,6 +1,6 @@
 name: Build and Release ESP32 Redialer
 
-on:
+"on":
   release:
     types: [created] # Trigger when a release is created
 
