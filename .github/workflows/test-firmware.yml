@@ -6,36 +6,48 @@ on:
       - main
     paths:
       - 'main/**'
-      - 'components/**'
-      - 'test/**'
+      - 'src/**'
+      - 'tests/**'
       - 'CMakeLists.txt'
 
 jobs:
-  test:
+  unit-tests:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # --- Test ESP32 Code ---
-    - name: Set up ESP-IDF and Run Tests
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcjson-dev build-essential
+
+    - name: Run unit tests
+      run: |
+        cd tests
+        make clean
+        make test
+
+  firmware-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build ESP32 firmware
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
         esp_idf_version: 'release-v5.1'
         command: |
-          cd test
           idf.py build
-          # Run tests using Unity test runner
-          echo "Tests built successfully. In a real CI environment, these would run on ESP32 hardware or simulator."
-          
-    # --- Validate Code Quality ---
-    - name: Check code formatting and style
+
+    - name: Check code quality
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
         esp_idf_version: 'release-v5.1'
         command: |
-          # Basic code quality checks
           echo "Checking for basic code quality issues..."
           
           # Check for common issues in main.c
@@ -49,9 +61,3 @@ jobs:
           fi
           
           echo "Code quality check completed."
-
-    # --- Build Main Project to Ensure Tests Don't Break Build ---
-    - name: Build main project
-      uses: espressif/esp-idf-ci-action@v1.2.0
-      with:
-        esp_idf_version: 'release-v5.1'

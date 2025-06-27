@@ -39,3 +39,8 @@ react-app/coverage/
 
 # ESP-IDF build artifacts
 build/
+
+# Test artifacts
+tests/run_tests
+tests/*.o
+src/*.o
