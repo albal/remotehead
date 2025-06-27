@@ -1,0 +1,162 @@
+name: Build and Release ESP32 Redialer
+
+"on":
+  release:
+    types: [created] # Trigger when a release is created
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # --- Build React Application ---
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18' # Use a Node.js version compatible with your React app
+
+    - name: Install React app dependencies
+      run: npm install
+      working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
+
+    - name: Build React app
+      run: npm run build
+      working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
+
+    # --- Copy React Build to ESP32 SPIFFS directory ---
+    - name: Create ESP32 SPIFFS directory
+      run: mkdir -p ./spiffs
+
+    - name: Copy React build files to ESP32 SPIFFS directory
+      run: |
+        cp -r ./react-app/build/* ./spiffs/
+        echo "Copied React build files to ESP32 SPIFFS directory."
+        ls -R ./spiffs/ # List contents for verification
+
+    # --- Prepare ESP32 Firmware Build Environment ---
+    - name: Set up ESP-IDF and Build
+      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
+      with:
+        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
+        command: 'idf.py build' # Build firmware (SPIFFS image created automatically)
+
+    # --- Generate Combined Flashable Image ---
+    - name: Create combined flashable binary
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.1'
+        command: |
+          # Use esptool from ESP-IDF to create combined binary
+          # Path to generated binaries (relative to root directory)
+          BOOTLOADER_BIN="build/bootloader/bootloader.bin"
+          PARTITIONS_BIN="build/partition_table/partition-table.bin"
+          APP_BIN="build/remotehead.bin"
+          SPIFFS_IMG="build/spiffs.bin"
+          
+          # Define flash offsets based on partitions.csv
+          BOOTLOADER_OFFSET="0x1000"
+          PARTITIONS_OFFSET="0x8000"
+          APP_OFFSET="0x10000"
+          SPIFFS_OFFSET="0x190000"
+          
+          # Create combined flashable image using esptool from ESP-IDF
+          python $IDF_PATH/components/esptool_py/esptool/esptool.py --chip esp32 merge_bin \
+            -o "flash_image_combined.bin" \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
+            ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
+            ${APP_OFFSET} ${APP_BIN} \
+            ${SPIFFS_OFFSET} ${SPIFFS_IMG}
+          
+          echo "Combined flashable binary created: flash_image_combined.bin"
+          ls -la flash_image_combined.bin
+
+    # --- Verify build artifacts exist ---
+    - name: Verify build artifacts
+      run: |
+        echo "Checking for required firmware files..."
+        ls -la build/bootloader/bootloader.bin
+        ls -la build/partition_table/partition-table.bin  
+        ls -la build/remotehead.bin
+        ls -la build/spiffs.bin
+        ls -la flash_image_combined.bin
+        echo "All firmware files found!"
+
+    # --- Generate checksums ---
+    - name: Generate checksums
+      run: |
+        echo "Generating SHA256 checksums..."
+        cd build
+        sha256sum bootloader/bootloader.bin > ../checksums.txt
+        sha256sum partition_table/partition-table.bin >> ../checksums.txt
+        sha256sum remotehead.bin >> ../checksums.txt
+        sha256sum spiffs.bin >> ../checksums.txt
+        cd ..
+        sha256sum flash_image_combined.bin >> checksums.txt
+        echo "Checksums generated:"
+        cat checksums.txt
+
+    # --- Attach firmware binaries to release ---
+    - name: Upload firmware binaries to release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Upload individual components
+        gh release upload ${{ github.event.release.tag_name }} \
+          build/bootloader/bootloader.bin \
+          build/partition_table/partition-table.bin \
+          build/remotehead.bin \
+          build/spiffs.bin \
+          flash_image_combined.bin#esp32-redialer-${{ github.event.release.tag_name }}-complete.bin \
+          checksums.txt
+
+    # --- Create and upload flashing instructions ---
+    - name: Create and upload flashing instructions
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        cat > FLASHING_INSTRUCTIONS.md << 'EOF'
+        # ESP32 Redialer Firmware Flashing Instructions
+        
+        ## Option 1: Flash Complete Image (Recommended)
+        Use the complete firmware image `esp32-redialer-${{ github.event.release.tag_name }}-complete.bin`:
+        
+        ```bash
+        esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 write_flash 0x0 esp32-redialer-${{ github.event.release.tag_name }}-complete.bin
+        ```
+        
+        ## Option 2: Flash Individual Components
+        Flash each component separately:
+        
+        ```bash
+        esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 write_flash \
+          0x1000 bootloader.bin \
+          0x8000 partition-table.bin \
+          0x10000 remotehead.bin \
+          0x190000 spiffs.bin
+        ```
+        
+        ## Notes
+        - Replace `/dev/ttyUSB0` with your ESP32's serial port
+        - On Windows, use `COM3`, `COM4`, etc.
+        - On macOS, use `/dev/cu.usbserial-*` or `/dev/cu.SLAB_USBtoUART`
+        - You may need to hold the BOOT button on your ESP32 while flashing
+        - Install esptool: `pip install esptool`
+        
+        ## Verification
+        Use the provided `checksums.txt` file to verify integrity of downloaded files:
+        ```bash
+        sha256sum -c checksums.txt
+        ```
+        
+        ## First-time Setup
+        After flashing, the device will start in AP mode. Connect to the WiFi network "ESP32-Redialer" and navigate to http://192.168.4.1 to configure your WiFi credentials.
+        EOF
+        
+        # Upload flashing instructions
+        gh release upload ${{ github.event.release.tag_name }} FLASHING_INSTRUCTIONS.md
