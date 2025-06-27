@@ -3,15 +3,8 @@
 #include "cJSON.h"
 #include <string.h>
 
-// Mock HTTP request structure for testing
-typedef struct {
-    char* response_buffer;
-    size_t buffer_size;
-    char* content_type;
-} mock_httpd_req_t;
-
 // Mock function to simulate httpd_resp_send_json behavior
-esp_err_t mock_httpd_resp_send_json(mock_httpd_req_t *req, const char *json_str) {
+esp_err_t mock_httpd_resp_send_json(httpd_req_t *req, const char *json_str) {
     if (!req || !json_str) return ESP_ERR_INVALID_ARG;
     
     // Validate JSON
@@ -120,7 +113,7 @@ esp_err_t parse_auto_redial_config(const char* json_content, bool* enabled, uint
 void test_mock_httpd_resp_send_json_handles_valid_json(void) {
     char response_buffer[256];
     char content_type[32];
-    mock_httpd_req_t req = {
+    httpd_req_t req = {
         .response_buffer = response_buffer,
         .buffer_size = sizeof(response_buffer),
         .content_type = content_type
@@ -134,7 +127,7 @@ void test_mock_httpd_resp_send_json_handles_valid_json(void) {
 
 void test_mock_httpd_resp_send_json_rejects_invalid_json(void) {
     char response_buffer[256];
-    mock_httpd_req_t req = {
+    httpd_req_t req = {
         .response_buffer = response_buffer,
         .buffer_size = sizeof(response_buffer),
         .content_type = NULL

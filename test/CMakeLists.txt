@@ -6,8 +6,7 @@ set(TESTING 1)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-# Exclude the main component to avoid duplicate app_main symbols
-set(EXCLUDE_COMPONENTS "main")
-set(COMPONENTS "unity" "main_test")
+# Only include essential components for testing
+set(COMPONENTS "unity" "main_test" "esp_common" "freertos" "log" "newlib" "cjson" "nvs_flash" "esp_wifi")
 
 project(remotehead_tests)

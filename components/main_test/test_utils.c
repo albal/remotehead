@@ -1,8 +1,12 @@
 #include "unity.h"
 #include "test_utils.h"
-#include "esp_wifi.h"
 #include "cJSON.h"
 #include <string.h>
+
+// Mock WiFi mode constants for testing
+#define WIFI_MODE_AP   1
+#define WIFI_MODE_STA  2
+#define WIFI_MODE_APSTA 3
 
 // Test utility functions
 

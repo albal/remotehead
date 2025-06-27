@@ -4,5 +4,5 @@ idf_component_register(
          "test_nvs_utils.c"
          "test_utils.c"
     INCLUDE_DIRS "."
-    REQUIRES unity esp_wifi esp_http_server cjson nvs_flash
+    REQUIRES unity cjson nvs_flash esp_common
 )
