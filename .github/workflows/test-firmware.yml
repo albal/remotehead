@@ -8,6 +8,7 @@ on:
       - 'main/**'
       - 'CMakeLists.txt'
       - 'sdkconfig'
+  workflow_dispatch:
 
 jobs:
   firmware-build:
