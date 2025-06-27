@@ -44,7 +44,6 @@ esp_timer_handle_t auto_redial_timer;
 
 // Morse code LED task handle
 TaskHandle_t morse_code_task_handle = NULL;
-bool ip_address_changed = false;
 
 // NVS Namespace and Keys
 #define NVS_NAMESPACE "redial_config"
@@ -853,7 +852,6 @@ static void morse_code_led_task(void *pvParameters)
 
 static void signal_ip_change(void)
 {
-    ip_address_changed = true;
     ESP_LOGI(TAG, "IP address change signaled for morse code update");
 }
 
