@@ -1,0 +1,70 @@
+name: Test Firmware on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'main/**'
+      - 'CMakeLists.txt'
+      - 'sdkconfig'
+
+jobs:
+  firmware-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build ESP32 firmware
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.1'
+        command: |
+          idf.py build
+
+    - name: Validate build artifacts
+      run: |
+        if [ ! -f build/remotehead.bin ]; then
+          echo "Error: Firmware binary not found"
+          exit 1
+        fi
+        echo "✅ Firmware build successful"
+        
+        # Check binary size (warn if over 1MB)
+        SIZE=$(stat -c%s build/remotehead.bin)
+        SIZE_MB=$((SIZE / 1024 / 1024))
+        echo "📊 Firmware size: ${SIZE} bytes (${SIZE_MB} MB)"
+        if [ $SIZE -gt 1048576 ]; then
+          echo "⚠️  Warning: Firmware size is over 1MB"
+        fi
+
+    - name: Run basic code quality checks
+      run: |
+        echo "🔍 Checking for basic code quality issues..."
+        
+        # Check for common issues in main.c
+        if grep -n "malloc(" main/main.c | grep -v "free("; then
+          echo "⚠️  Warning: Found malloc calls, ensure corresponding free() calls exist"
+        fi
+        
+        # Check for potentially unsafe string functions
+        if grep -n "strcpy\|strcat\|sprintf" main/main.c; then
+          echo "⚠️  Warning: Found potentially unsafe string functions. Consider using safe alternatives."
+        fi
+        
+        # Check for TODO/FIXME comments
+        if grep -n "TODO\|FIXME" main/main.c; then
+          echo "📝 Found TODO/FIXME comments in code"
+        fi
+        
+        # Basic syntax check by attempting to preprocess
+        echo "📋 Running basic syntax validation..."
+        # This is a simple check - the actual build is the real validation
+        if ! grep -q "app_main" main/main.c; then
+          echo "❌ Error: app_main function not found in main.c"
+          exit 1
+        fi
+        
+        echo "✅ Basic code quality checks completed"
