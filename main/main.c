@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
+#include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h"
 #include "esp_timer.h"
@@ -60,7 +61,7 @@ esp_timer_handle_t auto_redial_timer;
 #define WEB_MOUNT_POINT "/spiffs"
 
 // File serving constants
-#define FILE_PATH_MAX 256
+#define FILE_PATH_MAX 1024
 #define CHUNK_SIZE 1024
 
 // --- Forward Declarations ---
@@ -871,7 +872,7 @@ void app_main(void)
     
     // Set Bluetooth device name
     const char *device_name = "ESP32_Redial_API";
-    esp_bt_gap_set_device_name(device_name);
+    esp_bt_dev_set_device_name(device_name);
 
     // Initialize HFP client
     ret = esp_hf_client_init();
