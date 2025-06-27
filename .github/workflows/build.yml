@@ -5,6 +5,9 @@ on:
     branches:
       - main # Trigger on pushes to the main branch
   workflow_dispatch: # Allows manual triggering from GitHub UI
+  pull_request:
+    types:
+      - closed
 
 jobs:
   build:
