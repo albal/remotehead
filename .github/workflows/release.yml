@@ -76,59 +76,49 @@ jobs:
           echo "Combined flashable binary created: flash_image_combined.bin"
           ls -la flash_image_combined.bin
 
+    # --- Verify build artifacts exist ---
+    - name: Verify build artifacts
+      run: |
+        echo "Checking for required firmware files..."
+        ls -la build/bootloader/bootloader.bin
+        ls -la build/partition_table/partition-table.bin  
+        ls -la build/remotehead.bin
+        ls -la build/spiffs.bin
+        ls -la flash_image_combined.bin
+        echo "All firmware files found!"
+
+    # --- Generate checksums ---
+    - name: Generate checksums
+      run: |
+        echo "Generating SHA256 checksums..."
+        cd build
+        sha256sum bootloader/bootloader.bin > ../checksums.txt
+        sha256sum partition_table/partition-table.bin >> ../checksums.txt
+        sha256sum remotehead.bin >> ../checksums.txt
+        sha256sum spiffs.bin >> ../checksums.txt
+        cd ..
+        sha256sum flash_image_combined.bin >> checksums.txt
+        echo "Checksums generated:"
+        cat checksums.txt
+
     # --- Attach firmware binaries to release ---
-    - name: Upload bootloader to release
-      uses: actions/upload-release-asset@v1
+    - name: Upload firmware binaries to release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./build/bootloader/bootloader.bin
-        asset_name: bootloader.bin
-        asset_content_type: application/octet-stream
+      run: |
+        # Upload individual components
+        gh release upload ${{ github.event.release.tag_name }} \
+          build/bootloader/bootloader.bin \
+          build/partition_table/partition-table.bin \
+          build/remotehead.bin \
+          build/spiffs.bin \
+          flash_image_combined.bin#esp32-redialer-${{ github.event.release.tag_name }}-complete.bin \
+          checksums.txt
 
-    - name: Upload partition table to release
-      uses: actions/upload-release-asset@v1
+    # --- Create and upload flashing instructions ---
+    - name: Create and upload flashing instructions
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./build/partition_table/partition-table.bin
-        asset_name: partition-table.bin
-        asset_content_type: application/octet-stream
-
-    - name: Upload application binary to release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./build/remotehead.bin
-        asset_name: remotehead.bin
-        asset_content_type: application/octet-stream
-
-    - name: Upload SPIFFS image to release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./build/spiffs.bin
-        asset_name: spiffs.bin
-        asset_content_type: application/octet-stream
-
-    - name: Upload combined flashable image to release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./flash_image_combined.bin
-        asset_name: esp32-redialer-${{ github.event.release.tag_name }}-complete.bin
-        asset_content_type: application/octet-stream
-
-    # --- Create flashing instructions ---
-    - name: Create flashing instructions
       run: |
         cat > FLASHING_INSTRUCTIONS.md << 'EOF'
         # ESP32 Redialer Firmware Flashing Instructions
@@ -158,16 +148,15 @@ jobs:
         - You may need to hold the BOOT button on your ESP32 while flashing
         - Install esptool: `pip install esptool`
         
+        ## Verification
+        Use the provided `checksums.txt` file to verify integrity of downloaded files:
+        ```bash
+        sha256sum -c checksums.txt
+        ```
+        
         ## First-time Setup
         After flashing, the device will start in AP mode. Connect to the WiFi network "ESP32-Redialer" and navigate to http://192.168.4.1 to configure your WiFi credentials.
         EOF
-
-    - name: Upload flashing instructions to release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./FLASHING_INSTRUCTIONS.md
-        asset_name: FLASHING_INSTRUCTIONS.md
-        asset_content_type: text/markdown
+        
+        # Upload flashing instructions
+        gh release upload ${{ github.event.release.tag_name }} FLASHING_INSTRUCTIONS.md
