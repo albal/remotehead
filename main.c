@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h> // For stat()
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -14,8 +16,9 @@
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "lwip/ip_addr.h"
-#include "driver/gpio.h" // For GPIO control
-#include "cJSON.h" // For JSON parsing
+#include "driver/gpio.h"
+#include "cJSON.h"
+#include "esp_spiffs.h" // For SPIFFS file system
 
 #define TAG "HFP_REDIAL_API"
 
@@ -47,6 +50,9 @@ esp_timer_handle_t auto_redial_timer;
 // GPIO Pin for Factory Reset (D13 on many ESP32 boards)
 #define FACTORY_RESET_PIN GPIO_NUM_13
 
+// SPIFFS Mount Point
+#define WEB_MOUNT_POINT "/spiffs"
+
 // --- Forward Declarations ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param);
 static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
@@ -55,17 +61,19 @@ static esp_err_t redial_get_handler(httpd_req_t *req);
 static esp_err_t dial_get_handler(httpd_req_t *req);
 static esp_err_t status_get_handler(httpd_req_t *req);
 static esp_err_t configure_wifi_post_handler(httpd_req_t *req);
-static esp_err_t set_auto_redial_post_handler(httpd_req_t *req); // New handler
+static esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
+static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err); // New error handler
 static httpd_handle_t start_webserver(void);
 static void stop_webserver(httpd_handle_t server);
 static void start_wifi_ap(void);
 static void start_wifi_sta(const char *ssid, const char *password);
 static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ssid_len, size_t password_len);
 static void save_wifi_credentials_to_nvs(const char *ssid, const char *password);
-static bool load_auto_redial_settings_from_nvs(void); // New load function
-static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period); // New save function
-void auto_redial_timer_callback(void* arg); // Timer callback
-static void update_auto_redial_timer(void); // Function to manage timer state
+static bool load_auto_redial_settings_from_nvs(void);
+static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period);
+void auto_redial_timer_callback(void* arg);
+static void update_auto_redial_timer(void);
+static esp_err_t serve_static_file(httpd_req_t *req); // New static file server handler
 
 // --- HFP Client Callback ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
@@ -452,7 +460,7 @@ static esp_err_t configure_wifi_post_handler(httpd_req_t *req)
 {
     char content_buffer[256];
     int ret = httpd_req_recv(req, content_buffer, sizeof(content_buffer) - 1); // -1 for null terminator
-    if (ret <= 0) {
+    if (ret <= 0) {  // 0 means connection closed, < 0 means error
         if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
             httpd_resp_send_408(req);
         }
@@ -536,6 +544,71 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
     }
 }
 
+// --- Static File Server Handler ---
+static esp_err_t serve_static_file(httpd_req_t *req)
+{
+    char filepath[FILE_PATH_MAX];
+    const char *filename = req->uri;
+
+    // If URI is just "/", serve index.html
+    if (strcmp(req->uri, "/") == 0) {
+        filename = "/index.html";
+    }
+
+    snprintf(filepath, sizeof(filepath), "%s%s", WEB_MOUNT_POINT, filename);
+
+    struct stat file_stat;
+    if (stat(filepath, &file_stat) == -1) {
+        ESP_LOGE(TAG, "File not found: %s", filepath);
+        /* Respond with 404 Error */
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+        return ESP_FAIL;
+    }
+
+    FILE *fd = fopen(filepath, "r");
+    if (!fd) {
+        ESP_LOGE(TAG, "Failed to read file : %s", filepath);
+        /* Respond with 500 Internal Server Error */
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read file");
+        return ESP_FAIL;
+    }
+
+    // Determine content type based on file extension
+    if (strstr(filename, ".html")) {
+        httpd_resp_set_type(req, "text/html");
+    } else if (strstr(filename, ".js")) {
+        httpd_resp_set_type(req, "application/javascript");
+    } else if (strstr(filename, ".css")) {
+        httpd_resp_set_type(req, "text/css");
+    } else if (strstr(filename, ".png")) {
+        httpd_resp_set_type(req, "image/png");
+    } else if (strstr(filename, ".ico")) {
+        httpd_resp_set_type(req, "image/x-icon");
+    } else {
+        httpd_resp_set_type(req, "application/octet-stream");
+    }
+
+    char *chunk = (char *)malloc(CHUNK_SIZE);
+    if (!chunk) {
+        ESP_LOGE(TAG, "Failed to allocate memory for chunk");
+        fclose(fd);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to allocate memory");
+        return ESP_FAIL;
+    }
+
+    size_t read_bytes;
+    do {
+        read_bytes = fread(chunk, 1, CHUNK_SIZE, fd);
+        httpd_resp_send_chunk(req, chunk, read_bytes);
+    } while (read_bytes > 0);
+
+    free(chunk);
+    fclose(fd);
+    ESP_LOGI(TAG, "File served: %s", filepath);
+    httpd_resp_send_chunk(req, NULL, 0); // End response
+    return ESP_OK;
+}
+
 
 // --- HTTP Server Configuration and Start/Stop ---
 static httpd_uri_t redial_uri = {
@@ -566,10 +639,18 @@ static httpd_uri_t configure_wifi_uri = {
     .user_ctx  = NULL
 };
 
-static httpd_uri_t set_auto_redial_uri = { // New URI handler
+static httpd_uri_t set_auto_redial_uri = {
     .uri       = "/set_auto_redial",
     .method    = HTTP_POST,
     .handler   = set_auto_redial_post_handler,
+    .user_ctx  = NULL
+};
+
+// New URI handler for serving static files (catch-all)
+static httpd_uri_t static_files_uri = {
+    .uri       = "/*", // Matches any URI
+    .method    = HTTP_GET,
+    .handler   = serve_static_file,
     .user_ctx  = NULL
 };
 
@@ -579,16 +660,23 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 5; // Increased to accommodate new handler
+    config.max_uri_handlers = 6; // Increased to accommodate new handler (root is handled by static_files_uri)
+    config.stack_size = 8192; // Increase stack size for HTTP server task if needed
+    config.recv_wait_timeout = 10; // Increase timeout for receiving data
+    config.send_wait_timeout = 10; // Increase timeout for sending data
+
 
     ESP_LOGI(TAG, "Starting web server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
         ESP_LOGI(TAG, "Registering URI handlers");
+        // Register API handlers first so they take precedence
         httpd_register_uri_handler(server, &redial_uri);
         httpd_register_uri_handler(server, &dial_uri);
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
-        httpd_register_uri_handler(server, &set_auto_redial_uri); // Register new handler
+        httpd_register_uri_handler(server, &set_auto_redial_uri);
+        // Register static file handler last as a catch-all
+        httpd_register_uri_handler(server, &static_files_uri);
         return server;
     }
 
@@ -635,6 +723,40 @@ static void update_auto_redial_timer(void) {
     }
 }
 
+// --- SPIFFS Initialization ---
+static esp_err_t init_spiffs(void)
+{
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = WEB_MOUNT_POINT,
+      .partition_label = NULL, // Use default partition label
+      .max_files = 5,   // Max number of files that can be open at the same time
+      .format_if_mount_failed = true // Format if mount fails
+    };
+
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return ret;
+    }
+
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(conf.partition_label, &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
+    return ret;
+}
 
 // --- Main Application Entry Point ---
 void app_main(void)
@@ -647,13 +769,23 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(50)); // Allow pin to settle
 
     if (gpio_get_level(FACTORY_RESET_PIN) == 0) { // Pin pulled low
-        ESP_LOGW(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Erasing NVS...", FACTORY_RESET_PIN);
+        ESP_LOGW(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Erasing NVS and SPIFFS...", FACTORY_RESET_PIN);
         ret = nvs_flash_erase();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "NVS erase failed: %s", esp_err_to_name(ret));
         } else {
-            ESP_LOGI(TAG, "NVS erased successfully. Performing factory reset.");
+            ESP_LOGI(TAG, "NVS erased successfully.");
         }
+        
+        // Also unmount and format SPIFFS
+        esp_vfs_spiffs_unregister(NULL); // Unregister any existing mount
+        ret = esp_spiffs_format(NULL); // Format default SPIFFS partition
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "SPIFFS format failed: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "SPIFFS formatted successfully. Performing factory reset.");
+        }
+        // After erase/format, re-initialize NVS and SPIFFS will be formatted on next mount if needed
     } else {
         ESP_LOGI(TAG, "FACTORY RESET PIN (GPIO%d) is HIGH. Proceeding with normal boot.", FACTORY_RESET_PIN);
     }
@@ -665,6 +797,9 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Initialize SPIFFS
+    ESP_ERROR_CHECK(init_spiffs());
 
     // Initialize TCP/IP stack and event loop
     ESP_ERROR_CHECK(esp_netif_init());
