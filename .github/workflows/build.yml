@@ -43,7 +43,7 @@ jobs:
       uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
       with:
         esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
-        command: 'idf.py build && idf.py build-spiffs' # Build firmware and SPIFFS image
+        command: 'idf.py build' # Build firmware (SPIFFS image created automatically)
 
     # --- Generate Combined Flashable Image ---
     - name: Create combined flashable binary
@@ -66,7 +66,7 @@ jobs:
         BOOTLOADER_BIN="build/bootloader/bootloader.bin"
         PARTITIONS_BIN="build/partition_table/partition-table.bin"
         APP_BIN="build/remotehead.bin" # Project name based on CMakeLists.txt
-        SPIFFS_IMG="build/spiffs.bin"
+        SPIFFS_IMG="build/spiffs.bin" # SPIFFS image created by spiffs_create_partition_image
 
         # Define flash offsets based on your partitions.csv
         # Check your build/flasher_args.json after a local build for precise offsets
