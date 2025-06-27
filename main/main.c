@@ -22,6 +22,12 @@
 
 #define TAG "HFP_REDIAL_API"
 
+// Helper function to send JSON response
+static esp_err_t httpd_resp_send_json(httpd_req_t *req, const char *json_str) {
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, json_str);
+}
+
 // --- Global Variables ---
 bool is_bluetooth_connected = false; // Bluetooth HFP connection status
 httpd_handle_t server = NULL; // HTTP server handle
@@ -53,6 +59,10 @@ esp_timer_handle_t auto_redial_timer;
 // SPIFFS Mount Point
 #define WEB_MOUNT_POINT "/spiffs"
 
+// File serving constants
+#define FILE_PATH_MAX 256
+#define CHUNK_SIZE 1024
+
 // --- Forward Declarations ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param);
 static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
@@ -62,7 +72,6 @@ static esp_err_t dial_get_handler(httpd_req_t *req);
 static esp_err_t status_get_handler(httpd_req_t *req);
 static esp_err_t configure_wifi_post_handler(httpd_req_t *req);
 static esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
-static esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err); // New error handler
 static httpd_handle_t start_webserver(void);
 static void stop_webserver(httpd_handle_t server);
 static void start_wifi_ap(void);
@@ -82,25 +91,23 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
 
     switch (event) {
         case ESP_HF_CLIENT_CONNECTION_STATE_EVT:
-            if (param->conn_stat.status == ESP_BT_STATUS_SUCCESS) {
-                if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
-                    ESP_LOGI(TAG, "HFP Client Connected to phone!");
-                    is_bluetooth_connected = true;
-                    update_auto_redial_timer(); // Update timer state
-                } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
-                    ESP_LOGI(TAG, "HFP Client Disconnected from phone!");
-                    is_bluetooth_connected = false;
-                    update_auto_redial_timer(); // Update timer state
-                }
+            if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
+                ESP_LOGI(TAG, "HFP Client Connected to phone!");
+                is_bluetooth_connected = true;
+                update_auto_redial_timer(); // Update timer state
+            } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
+                ESP_LOGI(TAG, "HFP Client Disconnected from phone!");
+                is_bluetooth_connected = false;
+                update_auto_redial_timer(); // Update timer state
             } else {
-                ESP_LOGE(TAG, "HFP Client Connection failed! Status: %d", param->conn_stat.status);
+                ESP_LOGE(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
             }
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
             ESP_LOGI(TAG, "HFP Audio State: %d", param->audio_stat.state);
             break;
         case ESP_HF_CLIENT_BVRA_EVT:
-            ESP_LOGI(TAG, "Voice recognition activated: %d", param->bvra.state);
+            ESP_LOGI(TAG, "Voice recognition event received");
             break;
         case ESP_HF_CLIENT_CIND_CALL_EVT:
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT:
@@ -127,7 +134,7 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
             break;
         }
         case ESP_BT_GAP_PIN_REQ_EVT: {
-            ESP_LOGI(TAG, "ESP_BT_GAP_PIN_REQ_EVT min_len:%d", param->pin_req.min_len);
+            ESP_LOGI(TAG, "ESP_BT_GAP_PIN_REQ_EVT");
             esp_bt_pin_code_t pin_code;
             pin_code[0] = '1'; pin_code[1] = '2'; pin_code[2] = '3'; pin_code[3] = '4';
             esp_bt_gap_pin_reply(param->pin_req.bda, true, 4, pin_code);
@@ -143,7 +150,7 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
             break;
         case ESP_BT_GAP_KEY_REQ_EVT:
             ESP_LOGI(TAG, "ESP_BT_GAP_KEY_REQ_EVT");
-            esp_bt_gap_ssp_variant_reply(param->key_req.bda, ESP_BT_SSP_VARIANT_PASSKEY_ENTRY);
+            esp_bt_gap_ssp_passkey_reply(param->key_req.bda, true, 0);
             break;
 #endif
         default: {
@@ -313,7 +320,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
-        ip4addr_ntoa_r(&event->ip_info.ip, current_ip_address, sizeof(current_ip_address));
+        ip4addr_ntoa_r((const ip4_addr_t*)&event->ip_info.ip, current_ip_address, sizeof(current_ip_address));
         current_wifi_mode = WIFI_MODE_STA;
         if (server == NULL) {
             server = start_webserver(); // Start web server once IP is obtained
@@ -347,7 +354,7 @@ static void start_wifi_sta(const char *ssid, const char *password) {
         // If currently in AP mode, stop it first
         ESP_LOGI(TAG, "Stopping AP mode before switching to STA.");
         ESP_ERROR_CHECK(esp_wifi_stop());
-        esp_netif_destroy_default_wifi_ap(); // Destroy AP interface
+        // Note: AP interface cleanup handled by netif deinit/init cycle
     }
 
     esp_netif_create_default_wifi_sta(); // Create STA interface if not already present
@@ -384,7 +391,7 @@ static esp_err_t redial_get_handler(httpd_req_t *req)
     }
 
     ESP_LOGI(TAG, "HTTP: Received /redial command.");
-    esp_hf_client_send_bldn(); // Send the redial command
+    esp_hf_client_dial("REDIAL"); // Send the redial command
 
     httpd_resp_send_json(req, "{\"message\":\"Redial command sent\"}");
     return ESP_OK;
@@ -694,8 +701,8 @@ static void stop_webserver(httpd_handle_t server)
 void auto_redial_timer_callback(void* arg)
 {
     if (is_bluetooth_connected && auto_redial_enabled && current_wifi_mode == WIFI_MODE_STA) {
-        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command (AT+BLDN)...");
-        esp_hf_client_send_bldn();
+        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command...");
+        esp_hf_client_dial("REDIAL");
     } else {
         ESP_LOGD(TAG, "Auto Redial Timer: Conditions not met for redial (BT Connected: %d, Auto Enabled: %d, WiFi Mode: %d)",
                  is_bluetooth_connected, auto_redial_enabled, current_wifi_mode);
@@ -790,7 +797,7 @@ void app_main(void)
 
     // Initialize NVS
     ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_MEM || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase()); // Should not happen if erase above worked
         ret = nvs_flash_init();
     }
@@ -864,7 +871,7 @@ void app_main(void)
     
     // Set Bluetooth device name
     const char *device_name = "ESP32_Redial_API";
-    esp_bt_dev_set_device_name(device_name);
+    esp_bt_gap_set_device_name(device_name);
 
     // Initialize HFP client
     ret = esp_hf_client_init();
