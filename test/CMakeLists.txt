@@ -5,7 +5,9 @@ cmake_minimum_required(VERSION 3.16)
 set(TESTING 1)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(remotehead_tests)
 
-# Enable Unity testing framework
+# Exclude the main component to avoid duplicate app_main symbols
+set(EXCLUDE_COMPONENTS "main")
 set(COMPONENTS "unity" "main_test")
+
+project(remotehead_tests)
