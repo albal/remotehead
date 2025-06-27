@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // Main App component for the ESP32 Bluetooth Redial Controller
 const App = () => {
@@ -17,7 +17,7 @@ const App = () => {
   const [redialPeriod, setRedialPeriod] = useState(60); // Default to 60 seconds
 
   // Function to send commands to the ESP32
-  const sendCommand = async (endpoint, method = 'GET', body = null) => {
+  const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
     setStatusMessage('Sending command...');
     try {
       const url = `http://${esp32Ip}/${endpoint}`;
@@ -60,7 +60,7 @@ const App = () => {
       setStatusMessage(`Network error for "${endpoint}": ${error.message}. Ensure ESP32 IP is correct and device is reachable.`);
       setIsConnectedToEsp32(false); // If network error, assume connection lost
     }
-  };
+  }, [esp32Ip]);
 
   // Handler for the "Redial Last Number" button
   const handleRedial = () => {
@@ -118,9 +118,9 @@ const App = () => {
   };
 
   // Handler for checking ESP32 status
-  const checkStatus = () => {
+  const checkStatus = useCallback(() => {
     sendCommand('status');
-  };
+  }, [sendCommand]);
 
   // Check status automatically when component mounts and every 5 seconds
   useEffect(() => {
