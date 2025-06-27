@@ -127,7 +127,7 @@ const App = () => {
     checkStatus(); // Initial check
     const interval = setInterval(checkStatus, 5000); // Check every 5 seconds
     return () => clearInterval(interval); // Cleanup interval on unmount
-  }, [esp32Ip]); // Re-run if esp32Ip changes
+  }, [esp32Ip, checkStatus]); // Added checkStatus to dependency array
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 to-purple-200 flex items-center justify-center p-4 font-sans">
