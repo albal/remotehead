@@ -28,14 +28,6 @@ jobs:
       run: npm run build
       working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
 
-    # --- Prepare ESP32 Firmware Build Environment ---
-    - name: Set up ESP-IDF
-      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
-      with:
-        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
-        # The 'path' input here sets the working directory for idf.py commands
-        path: '.'
-
     # --- Copy React Build to ESP32 SPIFFS directory ---
     - name: Create ESP32 SPIFFS directory
       run: mkdir -p ./spiffs
@@ -46,58 +38,45 @@ jobs:
         echo "Copied React build files to ESP32 SPIFFS directory."
         ls -R ./spiffs/ # List contents for verification
 
-    # --- Build ESP32 Firmware and SPIFFS Image ---
-    - name: Build ESP32 firmware
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
-      run: idf.py build
-
-    - name: Build SPIFFS image
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
-      run: idf.py build-spiffs
+    # --- Prepare ESP32 Firmware Build Environment ---
+    - name: Set up ESP-IDF and Build
+      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
+      with:
+        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
+        command: 'idf.py build' # Build firmware (SPIFFS image created automatically)
 
     # --- Generate Combined Flashable Image ---
     - name: Create combined flashable binary
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
-      run: |
-        # Get partition table info to determine offsets
-        # This step assumes a standard 4MB flash layout or similar.
-        # Adjust offsets if your partition table is significantly different.
-        # You can inspect build/flasher_args.json or build/flash_project_args for exact offsets.
-        
-        # Example offsets (adjust based on your partitions.csv and build output)
-        # NVS: 0x9000
-        # Factory App (app0): 0x10000
-        # SPIFFS: 0x190000 (example, check your partitions.csv)
-
-        # Ensure these paths and offsets match your project's build output
-        ESP_TOOL="esptool.py" # Assumes esptool.py is in PATH from idf-action
-        CHIP="esp32" # Or esp32s2, esp32c3, etc. if using a different chip
-
-        # Path to generated binaries (relative to root directory)
-        BOOTLOADER_BIN="build/bootloader/bootloader.bin"
-        PARTITIONS_BIN="build/partition_table/partition-table.bin"
-        APP_BIN="build/remotehead.bin" # Project name based on CMakeLists.txt
-        SPIFFS_IMG="build/spiffs.bin"
-
-        # Define flash offsets based on your partitions.csv
-        # Check your build/flasher_args.json after a local build for precise offsets
-        BOOTLOADER_OFFSET="0x1000" # Standard bootloader offset
-        PARTITIONS_OFFSET="0x8000" # Standard partitions offset
-        APP_OFFSET="0x10000" # Standard app offset
-        SPIFFS_OFFSET="0x190000" # Example SPIFFS offset, MUST match your partitions.csv
-
-        # Merge all binaries into a single flashable image
-        ${ESP_TOOL} --chip ${CHIP} merge_bin \
-          -o "flash_image_combined.bin" \
-          --flash_mode dio \
-          --flash_freq 40m \
-          --flash_size 4MB \
-          ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
-          ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
-          ${APP_OFFSET} ${APP_BIN} \
-          ${SPIFFS_OFFSET} ${SPIFFS_IMG}
-        
-        echo "Combined flashable binary created: flash_image_combined.bin"
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.1'
+        command: |
+          # Use esptool from ESP-IDF to create combined binary
+          # Path to generated binaries (relative to root directory)
+          BOOTLOADER_BIN="build/bootloader/bootloader.bin"
+          PARTITIONS_BIN="build/partition_table/partition-table.bin"
+          APP_BIN="build/remotehead.bin"
+          SPIFFS_IMG="build/spiffs.bin"
+          
+          # Define flash offsets based on partitions.csv
+          BOOTLOADER_OFFSET="0x1000"
+          PARTITIONS_OFFSET="0x8000"
+          APP_OFFSET="0x10000"
+          SPIFFS_OFFSET="0x190000"
+          
+          # Create combined flashable image using esptool from ESP-IDF
+          python $IDF_PATH/components/esptool_py/esptool/esptool.py --chip esp32 merge_bin \
+            -o "flash_image_combined.bin" \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
+            ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
+            ${APP_OFFSET} ${APP_BIN} \
+            ${SPIFFS_OFFSET} ${SPIFFS_IMG}
+          
+          echo "Combined flashable binary created: flash_image_combined.bin"
+          ls -la flash_image_combined.bin
 
     # --- Upload Build Artifacts ---
     - name: Upload ESP32 binaries
