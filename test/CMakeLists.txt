@@ -8,4 +8,4 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(remotehead_tests)
 
 # Enable Unity testing framework
-set(COMPONENTS "unity" "main" "main_test")
+set(COMPONENTS "unity" "main_test")
