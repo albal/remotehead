@@ -35,6 +35,7 @@
 react-app/node_modules/
 react-app/build/
 react-app/package-lock.json
+react-app/coverage/
 
 # ESP-IDF build artifacts
 build/
