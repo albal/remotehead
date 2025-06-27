@@ -32,20 +32,19 @@ jobs:
     - name: Set up ESP-IDF
       uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
       with:
-        idf-version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
-        tools: 'idf, python, git, cmake, ninja' # Ensure necessary tools are installed
+        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
         # The 'path' input here sets the working directory for idf.py commands
-        path: './esp32-firmware'
+        path: '.'
 
     # --- Copy React Build to ESP32 SPIFFS directory ---
     - name: Create ESP32 SPIFFS directory
-      run: mkdir -p ./esp32-firmware/spiffs
+      run: mkdir -p ./spiffs
 
     - name: Copy React build files to ESP32 SPIFFS directory
       run: |
-        cp -r ./react-app/build/* ./esp32-firmware/spiffs/
+        cp -r ./react-app/build/* ./spiffs/
         echo "Copied React build files to ESP32 SPIFFS directory."
-        ls -R ./esp32-firmware/spiffs/ # List contents for verification
+        ls -R ./spiffs/ # List contents for verification
 
     # --- Build ESP32 Firmware and SPIFFS Image ---
     - name: Build ESP32 firmware
@@ -74,16 +73,14 @@ jobs:
         ESP_TOOL="esptool.py" # Assumes esptool.py is in PATH from idf-action
         CHIP="esp32" # Or esp32s2, esp32c3, etc. if using a different chip
 
-        # Path to generated binaries (relative to esp32-firmware directory)
+        # Path to generated binaries (relative to root directory)
         BOOTLOADER_BIN="build/bootloader/bootloader.bin"
-        PARTITIONS_BIN="build/partitions_singleapp.bin" # Or partitions.bin if not using single_app
-        APP_BIN="build/esp32-firmware.bin" # Replace with your project's main app binary name (e.g., build/my_redial_project.bin)
+        PARTITIONS_BIN="build/partition_table/partition-table.bin"
+        APP_BIN="build/remotehead.bin" # Project name based on CMakeLists.txt
         SPIFFS_IMG="build/spiffs.bin"
-        NVS_DATA_BIN="build/nvs_data.bin" # NVS data might be generated during build, or default to empty
 
         # Define flash offsets based on your partitions.csv
         # Check your build/flasher_args.json after a local build for precise offsets
-        NVS_OFFSET="0x9000"
         BOOTLOADER_OFFSET="0x1000" # Standard bootloader offset
         PARTITIONS_OFFSET="0x8000" # Standard partitions offset
         APP_OFFSET="0x10000" # Standard app offset
@@ -98,7 +95,6 @@ jobs:
           ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
           ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
           ${APP_OFFSET} ${APP_BIN} \
-          ${NVS_OFFSET} ${NVS_DATA_BIN} \
           ${SPIFFS_OFFSET} ${SPIFFS_IMG}
         
         echo "Combined flashable binary created: flash_image_combined.bin"
@@ -109,6 +105,6 @@ jobs:
       with:
         name: esp32-redialer-firmware
         path: |
-          ./esp32-firmware/build/*.bin
-          ./esp32-firmware/flash_image_combined.bin
+          ./build/*.bin
+          ./flash_image_combined.bin
         retention-days: 7 # Keep artifacts for 7 days
