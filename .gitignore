@@ -30,3 +30,16 @@
 *.exe
 *.out
 *.app
+
+# ESP-IDF build artifacts
+build/
+spiffs/
+sdkconfig.old
+*.bin
+*.elf
+*.map
+
+# React build artifacts and dependencies
+react-app/build/
+react-app/node_modules/
+react-app/package-lock.json
