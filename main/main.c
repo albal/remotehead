@@ -82,32 +82,30 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
 
     switch (event) {
         case ESP_HF_CLIENT_CONNECTION_STATE_EVT:
-            if (param->conn_state.status == ESP_BT_STATUS_SUCCESS) {
-                if (param->conn_state.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
+            if (param->conn_stat.status == ESP_BT_STATUS_SUCCESS) {
+                if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
                     ESP_LOGI(TAG, "HFP Client Connected to phone!");
                     is_bluetooth_connected = true;
                     update_auto_redial_timer(); // Update timer state
-                } else if (param->conn_state.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
+                } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
                     ESP_LOGI(TAG, "HFP Client Disconnected from phone!");
                     is_bluetooth_connected = false;
                     update_auto_redial_timer(); // Update timer state
                 }
             } else {
-                ESP_LOGE(TAG, "HFP Client Connection failed! Status: %d", param->conn_state.status);
+                ESP_LOGE(TAG, "HFP Client Connection failed! Status: %d", param->conn_stat.status);
             }
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
-            ESP_LOGI(TAG, "HFP Audio State: %d", param->audio_state.state);
+            ESP_LOGI(TAG, "HFP Audio State: %d", param->audio_stat.state);
             break;
-        case ESP_HF_CLIENT_BVRA_ENABLE_EVT:
-            ESP_LOGI(TAG, "Voice recognition activated: %d", param->bvra_enable.state);
+        case ESP_HF_CLIENT_BVRA_EVT:
+            ESP_LOGI(TAG, "Voice recognition activated: %d", param->bvra.state);
             break;
-        case ESP_HF_CLIENT_CMD_CIND_STATUS_EVT:
-        case ESP_HF_CLIENT_CMD_CIND_CURRENT_EVT:
-            ESP_LOGI(TAG, "Call indicator status. Call setup: %d, Call: %d, Service: %d",
-                     param->cind_status.call_setup_status,
-                     param->cind_status.call_status,
-                     param->cind_status.service_availability);
+        case ESP_HF_CLIENT_CIND_CALL_EVT:
+        case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT:
+        case ESP_HF_CLIENT_CIND_SERVICE_AVAILABILITY_EVT:
+            ESP_LOGI(TAG, "Call indicator status update received");
             break;
         default:
             ESP_LOGI(TAG, "Unhandled HFP event: %d", event);
