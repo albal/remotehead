@@ -38,12 +38,6 @@ jobs:
         echo "Copied React build files to ESP32 SPIFFS directory."
         ls -R ./spiffs/ # List contents for verification
 
-    - name: Remove LICENSE.txt files from SPIFFS directory
-      run: |
-        find ./spiffs/ -name "*.LICENSE.txt" -type f -delete
-        echo "Removed LICENSE.txt files to avoid SPIFFS object name length limit."
-        ls -R ./spiffs/ # List contents after cleanup
-
     # --- Prepare ESP32 Firmware Build Environment ---
     - name: Set up ESP-IDF and Build
       uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
