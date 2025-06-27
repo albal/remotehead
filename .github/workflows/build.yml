@@ -30,7 +30,7 @@ jobs:
 
     # --- Prepare ESP32 Firmware Build Environment ---
     - name: Set up ESP-IDF
-      uses: espressif/idf-action@v1.2.0 # Use the official ESP-IDF action
+      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
       with:
         idf-version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
         tools: 'idf, python, git, cmake, ninja' # Ensure necessary tools are installed
