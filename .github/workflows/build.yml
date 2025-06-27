@@ -28,12 +28,6 @@ jobs:
       run: npm run build
       working-directory: ./react-app # Keep working-directory for npm install/build as it's a separate project
 
-    # --- Prepare ESP32 Firmware Build Environment ---
-    - name: Set up ESP-IDF
-      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
-      with:
-        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
-
     # --- Copy React Build to ESP32 SPIFFS directory ---
     - name: Create ESP32 SPIFFS directory
       run: mkdir -p ./spiffs
@@ -44,20 +38,15 @@ jobs:
         echo "Copied React build files to ESP32 SPIFFS directory."
         ls -R ./spiffs/ # List contents for verification
 
-    # --- Build ESP32 Firmware and SPIFFS Image ---
-    - name: Build ESP32 firmware
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
-      run: idf.py build
-      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
-
-    - name: Build SPIFFS image
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
-      run: idf.py build-spiffs
-      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
+    # --- Prepare ESP32 Firmware Build Environment ---
+    - name: Set up ESP-IDF and Build
+      uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
+      with:
+        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
+        command: 'idf.py build && idf.py build-spiffs' # Build firmware and SPIFFS image
 
     # --- Generate Combined Flashable Image ---
     - name: Create combined flashable binary
-      # idf.py commands will run from the path specified in 'Set up ESP-IDF' step
       run: |
         # Get partition table info to determine offsets
         # This step assumes a standard 4MB flash layout or similar.
@@ -86,6 +75,9 @@ jobs:
         APP_OFFSET="0x10000" # Standard app offset
         SPIFFS_OFFSET="0x190000" # Example SPIFFS offset, MUST match your partitions.csv
 
+        # Set up ESP-IDF environment for esptool access
+        source $IDF_PATH/export.sh
+        
         # Merge all binaries into a single flashable image
         ${ESP_TOOL} --chip ${CHIP} merge_bin \
           -o "flash_image_combined.bin" \
@@ -98,7 +90,6 @@ jobs:
           ${SPIFFS_OFFSET} ${SPIFFS_IMG}
         
         echo "Combined flashable binary created: flash_image_combined.bin"
-      shell: bash -l {0} # Force a login shell to ensure ESP-IDF environment is sourced
 
     # --- Upload Build Artifacts ---
     - name: Upload ESP32 binaries
