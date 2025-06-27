@@ -182,7 +182,7 @@ const App = () => {
               id="home-ssid"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
               value={homeWifiSsid}
-              onChange={(e) => setHomeWifiSbid(e.target.value)}
+              onChange={(e) => setHomeWifiSsid(e.target.value)}
               placeholder="Your Home Wi-Fi Name"
             />
           </div>
