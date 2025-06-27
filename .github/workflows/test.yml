@@ -55,7 +55,3 @@ jobs:
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
         esp_idf_version: 'release-v5.1'
-        command: |
-          # Build the main project to ensure our test infrastructure doesn't break it
-          idf.py build
-          echo "Main project builds successfully with test infrastructure present."
