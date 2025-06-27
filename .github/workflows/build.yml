@@ -33,8 +33,6 @@ jobs:
       uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
       with:
         esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
-        # The 'path' input here sets the working directory for idf.py commands
-        path: 'main'
 
     # --- Copy React Build to ESP32 SPIFFS directory ---
     - name: Create ESP32 SPIFFS directory
