@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* You can add any global custom CSS here */
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif; /* Using Inter as per guidelines */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
