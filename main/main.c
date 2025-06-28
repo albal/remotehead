@@ -42,6 +42,9 @@ uint32_t redial_period_seconds = 60; // Default to 60 seconds
 // Timer handle for automatic redial
 esp_timer_handle_t auto_redial_timer;
 
+// Morse code LED task handle
+TaskHandle_t morse_code_task_handle = NULL;
+
 // NVS Namespace and Keys
 #define NVS_NAMESPACE "redial_config"
 #define NVS_KEY_SSID "ssid"
@@ -56,6 +59,16 @@ esp_timer_handle_t auto_redial_timer;
 
 // GPIO Pin for Factory Reset (D13 on many ESP32 boards)
 #define FACTORY_RESET_PIN GPIO_NUM_13
+
+// GPIO Pin for builtin LED (GPIO2 on most ESP32 boards)
+#define BUILTIN_LED_PIN GPIO_NUM_2
+
+// Morse code timing (milliseconds)
+#define MORSE_DOT_DURATION 200
+#define MORSE_DASH_DURATION 600
+#define MORSE_SYMBOL_PAUSE 200
+#define MORSE_CHAR_PAUSE 600
+#define MORSE_IP_READOUT_PAUSE 5000
 
 // SPIFFS Mount Point
 #define WEB_MOUNT_POINT "/spiffs"
@@ -84,6 +97,13 @@ static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period);
 void auto_redial_timer_callback(void* arg);
 static void update_auto_redial_timer(void);
 static esp_err_t serve_static_file(httpd_req_t *req); // New static file server handler
+static void morse_code_led_task(void *pvParameters);
+static void morse_dot(void);
+static void morse_dash(void);
+static void morse_digit(char digit);
+static void morse_ip_address(const char* ip_addr);
+static void init_led_gpio(void);
+static void signal_ip_change(void);
 
 // --- HFP Client Callback ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
@@ -303,6 +323,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "Wi-Fi AP started. Connect to SSID: %s", AP_SSID);
             current_wifi_mode = WIFI_MODE_AP;
             strcpy(current_ip_address, "192.168.4.1"); // Default AP IP
+            signal_ip_change(); // Signal morse code task about IP change
             if (server == NULL) {
                 server = start_webserver();
             }
@@ -316,12 +337,14 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             ESP_LOGW(TAG, "Wi-Fi STA disconnected. Retrying connection...");
             esp_wifi_connect(); // Attempt to reconnect
             memset(current_ip_address, 0, sizeof(current_ip_address)); // Clear IP on disconnect
+            signal_ip_change(); // Signal morse code task about IP change
             update_auto_redial_timer(); // Update timer state
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
         ip4addr_ntoa_r((const ip4_addr_t*)&event->ip_info.ip, current_ip_address, sizeof(current_ip_address));
+        signal_ip_change(); // Signal morse code task about IP change
         current_wifi_mode = WIFI_MODE_STA;
         if (server == NULL) {
             server = start_webserver(); // Start web server once IP is obtained
@@ -729,6 +752,109 @@ static void update_auto_redial_timer(void) {
     }
 }
 
+// --- LED Morse Code Functions ---
+static void init_led_gpio(void)
+{
+    gpio_set_direction(BUILTIN_LED_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(BUILTIN_LED_PIN, 0); // LED off initially
+    ESP_LOGI(TAG, "LED GPIO%d initialized for morse code", BUILTIN_LED_PIN);
+}
+
+static void morse_dot(void)
+{
+    gpio_set_level(BUILTIN_LED_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(MORSE_DOT_DURATION));
+    gpio_set_level(BUILTIN_LED_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(MORSE_SYMBOL_PAUSE));
+}
+
+static void morse_dash(void)
+{
+    gpio_set_level(BUILTIN_LED_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(MORSE_DASH_DURATION));
+    gpio_set_level(BUILTIN_LED_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(MORSE_SYMBOL_PAUSE));
+}
+
+static void morse_digit(char digit)
+{
+    switch (digit) {
+        case '0': // -----
+            morse_dash(); morse_dash(); morse_dash(); morse_dash(); morse_dash();
+            break;
+        case '1': // .----
+            morse_dot(); morse_dash(); morse_dash(); morse_dash(); morse_dash();
+            break;
+        case '2': // ..---
+            morse_dot(); morse_dot(); morse_dash(); morse_dash(); morse_dash();
+            break;
+        case '3': // ...--
+            morse_dot(); morse_dot(); morse_dot(); morse_dash(); morse_dash();
+            break;
+        case '4': // ....-
+            morse_dot(); morse_dot(); morse_dot(); morse_dot(); morse_dash();
+            break;
+        case '5': // .....
+            morse_dot(); morse_dot(); morse_dot(); morse_dot(); morse_dot();
+            break;
+        case '6': // -....
+            morse_dash(); morse_dot(); morse_dot(); morse_dot(); morse_dot();
+            break;
+        case '7': // --...
+            morse_dash(); morse_dash(); morse_dot(); morse_dot(); morse_dot();
+            break;
+        case '8': // ---..
+            morse_dash(); morse_dash(); morse_dash(); morse_dot(); morse_dot();
+            break;
+        case '9': // ----.
+            morse_dash(); morse_dash(); morse_dash(); morse_dash(); morse_dot();
+            break;
+        case '.': // .-.-.-
+            morse_dot(); morse_dash(); morse_dot(); morse_dash(); morse_dot(); morse_dash();
+            break;
+        default:
+            // Unknown character, skip
+            break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(MORSE_CHAR_PAUSE));
+}
+
+static void morse_ip_address(const char* ip_addr)
+{
+    if (ip_addr == NULL || strlen(ip_addr) == 0) {
+        ESP_LOGW(TAG, "No IP address to signal in morse code");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Signaling IP address in morse code: %s", ip_addr);
+    
+    for (int i = 0; ip_addr[i] != '\0'; i++) {
+        morse_digit(ip_addr[i]);
+    }
+}
+
+static void morse_code_led_task(void *pvParameters)
+{
+    ESP_LOGI(TAG, "Morse code LED task started on core %d", xPortGetCoreID());
+    
+    while (1) {
+        // Wait for IP address to be available
+        if (strlen(current_ip_address) > 0) {
+            morse_ip_address(current_ip_address);
+        } else {
+            ESP_LOGD(TAG, "No IP address available for morse code");
+        }
+        
+        // 5 second pause between readouts
+        vTaskDelay(pdMS_TO_TICKS(MORSE_IP_READOUT_PAUSE));
+    }
+}
+
+static void signal_ip_change(void)
+{
+    ESP_LOGI(TAG, "IP address change signaled for morse code update");
+}
+
 // --- SPIFFS Initialization ---
 static esp_err_t init_spiffs(void)
 {
@@ -898,6 +1024,20 @@ void app_main(void)
 
     // Initial update of the timer state based on loaded settings and current connection status
     update_auto_redial_timer();
+
+    // Initialize LED GPIO for morse code
+    init_led_gpio();
+
+    // Create morse code LED task on CPU core 1
+    xTaskCreatePinnedToCore(
+        morse_code_led_task,
+        "morse_led_task",
+        2048,
+        NULL,
+        1,  // Priority
+        &morse_code_task_handle,
+        1   // CPU core 1
+    );
 
     ESP_LOGI(TAG, "ESP32 HFP Headset Emulator with API initialized.");
 }
