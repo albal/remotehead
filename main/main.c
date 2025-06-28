@@ -357,7 +357,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 
 // --- Wi-Fi Initialization Functions ---
 static void start_wifi_ap(void) {
-    ap_netif = esp_netif_create_default_wifi_ap();
+    // Create AP interface only if it doesn't already exist
+    if (ap_netif == NULL) {
+        ap_netif = esp_netif_create_default_wifi_ap();
+    }
 
     wifi_config_t wifi_config = {
         .ap = {
@@ -391,7 +394,10 @@ static void start_wifi_sta(const char *ssid, const char *password) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    sta_netif = esp_netif_create_default_wifi_sta(); // Create STA interface
+    // Create STA interface only if it doesn't already exist
+    if (sta_netif == NULL) {
+        sta_netif = esp_netif_create_default_wifi_sta(); // Create STA interface
+    }
 
     wifi_config_t wifi_config = {
         .sta = {
