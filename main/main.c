@@ -34,6 +34,8 @@ bool is_bluetooth_connected = false; // Bluetooth HFP connection status
 httpd_handle_t server = NULL; // HTTP server handle
 char current_ip_address[IP4ADDR_STRLEN_MAX]; // To store current IP address
 wifi_mode_t current_wifi_mode = WIFI_MODE_NULL; // To store current Wi-Fi mode
+esp_netif_t *ap_netif = NULL; // AP network interface handle
+esp_netif_t *sta_netif = NULL; // STA network interface handle
 
 // Auto Redial Settings
 bool auto_redial_enabled = false;
@@ -355,7 +357,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 
 // --- Wi-Fi Initialization Functions ---
 static void start_wifi_ap(void) {
-    esp_netif_create_default_wifi_ap();
+    ap_netif = esp_netif_create_default_wifi_ap();
 
     wifi_config_t wifi_config = {
         .ap = {
@@ -378,10 +380,18 @@ static void start_wifi_sta(const char *ssid, const char *password) {
         // If currently in AP mode, stop it first
         ESP_LOGI(TAG, "Stopping AP mode before switching to STA.");
         ESP_ERROR_CHECK(esp_wifi_stop());
-        // Note: AP interface cleanup handled by netif deinit/init cycle
+        
+        // Properly destroy AP interface if it exists
+        if (ap_netif != NULL) {
+            esp_netif_destroy(ap_netif);
+            ap_netif = NULL;
+        }
+        
+        // Small delay to ensure clean interface transition
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    esp_netif_create_default_wifi_sta(); // Create STA interface if not already present
+    sta_netif = esp_netif_create_default_wifi_sta(); // Create STA interface
 
     wifi_config_t wifi_config = {
         .sta = {
@@ -514,9 +524,6 @@ static esp_err_t configure_wifi_post_handler(httpd_req_t *req)
         ESP_LOGI(TAG, "Switching to STA mode with SSID: %s", ssid_json->valuestring);
         stop_webserver(server); // Stop server before Wi-Fi mode change
         server = NULL; // Clear server handle
-        ESP_ERROR_CHECK(esp_wifi_stop()); // Stop current Wi-Fi mode
-        esp_netif_deinit(); // De-initialize netif for clean switch
-        esp_netif_init(); // Re-initialize netif
         start_wifi_sta(ssid_json->valuestring, password_json->valuestring); // Start STA mode
 
         cJSON_Delete(root);
