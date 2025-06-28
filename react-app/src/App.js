@@ -47,10 +47,10 @@ const App = () => {
             setEsp32Ip(data.ip_address);
           }
         } else if (endpoint === 'configure_wifi') {
-          // After configuring, assume ESP32 will reboot or switch, so clear IP and expect reconnection
-          setStatusMessage('Wi-Fi configured. ESP32 is restarting or switching modes. Please reconnect to your home network and update ESP32 IP if necessary.');
+          // After configuring, assume ESP32 will reboot or switch, so clear connection status and let status polling update IP
+          setStatusMessage('Wi-Fi configured. ESP32 is switching to home network. The IP address will be automatically updated when the device reconnects.');
           setIsConnectedToEsp32(false);
-          setEsp32Ip('192.168.1.100'); // Reset to a common STA IP for next connection attempt
+          // Don't set a hardcoded IP - let the status polling update it automatically
         }
       } else {
         setStatusMessage(`Error sending "${endpoint}" command: ${data.error || response.statusText}`);
@@ -286,7 +286,7 @@ const App = () => {
         {/* Instructions */}
         <div className="mt-6 text-xs text-gray-500 text-center">
           <p>Initially, connect your phone to the ESP32's Wi-Fi AP named "REMOTEHEAD" (no password). Its IP will be 192.168.4.1.</p>
-          <p>Once configured, the ESP32 will connect to your home Wi-Fi. You'll then need to reconnect your phone to your home Wi-Fi and update the ESP32 IP address above to its new IP on your home network (check your router's DHCP client list).</p>
+          <p>Once configured, the ESP32 will connect to your home Wi-Fi. You'll then need to reconnect your phone to your home Wi-Fi. The ESP32's new IP address will be automatically detected and updated.</p>
           <p>The ESP32 must always be paired with your mobile phone as a Bluetooth headset for redial/dial commands to work.</p>
         </div>
       </div>

@@ -169,6 +169,29 @@ describe('App Component', () => {
     expect(autoRedialCheckbox).not.toBeDisabled();
   });
 
+  test('automatically updates IP address when ESP32 reports new IP in STA mode', async () => {
+    // Mock response for STA mode with a specific IP address
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: false,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.55',
+        auto_redial_enabled: false,
+        redial_period: 60,
+        message: 'ESP32 connected to home network.'
+      })
+    });
+
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('STA')).toBeInTheDocument();
+      // Check that the IP input field has been updated to the ESP32's reported IP
+      expect(screen.getByDisplayValue('192.168.1.55')).toBeInTheDocument();
+    });
+  });
+
   test('handles API errors gracefully', async () => {
     fetch.mockResolvedValue({
       ok: false,
