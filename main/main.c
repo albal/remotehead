@@ -997,7 +997,7 @@ void app_main(void)
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     
     // Set Bluetooth device name
-    const char *device_name = "ESP32_Redial_API";
+    const char *device_name = "RemoteHead";
     esp_bt_dev_set_device_name(device_name);
 
     // Initialize HFP client
