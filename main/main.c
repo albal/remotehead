@@ -39,6 +39,7 @@ esp_netif_t *sta_netif = NULL; // STA network interface handle
 
 // Auto Redial Settings
 bool auto_redial_enabled = false;
+bool last_call_failed = false; // New: track last call failure
 uint32_t redial_period_seconds = 60; // Default to 60 seconds
 uint32_t redial_random_delay_seconds = 0; // New: random delay in seconds
 uint32_t last_random_delay_used = 0; // New: last random value used
@@ -153,6 +154,19 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                 update_auto_redial_timer(); // Update timer state
             } else {
                 ESP_LOGE(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
+            }
+            break;
+        case ESP_HF_CLIENT_AT_RESPONSE_EVT:
+            if (param->at_response.code == ESP_HF_AT_RESPONSE_ERROR ||
+                param->at_response.code == ESP_HF_AT_RESPONSE_CME) {
+                ESP_LOGW(TAG, "Call failed: AT response error code %d", param->at_response.cme);
+                last_call_failed = true;
+                if (auto_redial_enabled) {
+                    auto_redial_enabled = false;
+                    save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds);
+                }
+            } else {
+                last_call_failed = false;
             }
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
@@ -538,6 +552,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "redial_period", redial_period_seconds);
     cJSON_AddNumberToObject(root, "redial_random_delay", redial_random_delay_seconds); // New
     cJSON_AddNumberToObject(root, "last_random_delay", last_random_delay_used); // New
+    cJSON_AddBoolToObject(root, "last_call_failed", last_call_failed); // New
 
     cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "ESP32 Bluetooth connected to phone." : "ESP32 Bluetooth disconnected.");
 
