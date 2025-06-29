@@ -15,6 +15,9 @@ const App = () => {
   // New state variables for automatic redial
   const [autoRedialEnabled, setAutoRedialEnabled] = useState(false);
   const [redialPeriod, setRedialPeriod] = useState(60); // Default to 60 seconds
+  // New state for random delay and last random value
+  const [redialRandomDelay, setRedialRandomDelay] = useState(0);
+  const [lastRandomDelay, setLastRandomDelay] = useState(0);
 
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
@@ -37,11 +40,13 @@ const App = () => {
       if (response.ok) {
         setStatusMessage(`Command "${endpoint}" successful: ${data.message || JSON.stringify(data)}`);
         if (endpoint === 'status') {
-          setIsConnectedToEsp32(true); // Successfully fetched status, so connected to ESP32 HTTP server
+          setIsConnectedToEsp32(true);
           setIsBluetoothConnected(data.bluetooth_connected);
           setEsp32WifiMode(data.wifi_mode);
-          setAutoRedialEnabled(data.auto_redial_enabled); // Update auto redial state
-          setRedialPeriod(data.redial_period); // Update redial period state
+          setAutoRedialEnabled(data.auto_redial_enabled);
+          setRedialPeriod(data.redial_period);
+          setRedialRandomDelay(data.redial_random_delay || 0); // New
+          setLastRandomDelay(data.last_random_delay || 0); // New
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -95,6 +100,7 @@ const App = () => {
     sendCommand('set_auto_redial', 'POST', {
       enabled: newEnabledState,
       period: redialPeriod,
+      random_delay: redialRandomDelay, // New
     });
   };
 
@@ -113,6 +119,22 @@ const App = () => {
       sendCommand('set_auto_redial', 'POST', {
         enabled: autoRedialEnabled,
         period: value,
+        random_delay: redialRandomDelay, // New
+      });
+    }
+  };
+
+  // Handler for changing random delay
+  const handleRandomDelayChange = (e) => {
+    let value = parseInt(e.target.value, 10);
+    if (isNaN(value)) value = 0;
+    value = Math.max(0, Math.min(value, 86400));
+    setRedialRandomDelay(value);
+    if (autoRedialEnabled) {
+      sendCommand('set_auto_redial', 'POST', {
+        enabled: autoRedialEnabled,
+        period: redialPeriod,
+        random_delay: value,
       });
     }
   };
@@ -243,6 +265,31 @@ const App = () => {
             />
             <p className="text-xs text-gray-500 mt-1">
               Minimum: 10 seconds, Maximum: 84600 seconds (1 day)
+            </p>
+          </div>
+          <div className="mb-4">
+            <label htmlFor="random-delay" className="block text-sm font-medium text-gray-700 mb-1">
+              Random Extra Delay (seconds):
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="number"
+                id="random-delay"
+                className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={redialRandomDelay}
+                onChange={handleRandomDelayChange}
+                min="0"
+                max="86400"
+                step="1"
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'} // Only enabled if connected and in STA mode
+              />
+              <span className="text-xs text-gray-600">(0 = no random delay)</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              For each redial, a random number between 0 and this value is added to the base period.
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Last random value used: <span className="font-mono">{lastRandomDelay}</span> seconds
             </p>
           </div>
         </div>

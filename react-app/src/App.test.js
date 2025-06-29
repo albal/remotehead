@@ -246,3 +246,88 @@ describe('App Component', () => {
     });
   });
 });
+
+// --- Tests for Random Delay Spinner and Readout ---
+describe('Random Delay Spinner and Readout', () => {
+  beforeEach(() => {
+    fetch.mockClear();
+  });
+
+  test('renders random delay spinner and last random value', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 15,
+        last_random_delay: 7,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Random Extra Delay/i)).toBeInTheDocument();
+    });
+    const spinner = screen.getByLabelText(/Random Extra Delay/i);
+    expect(spinner).toHaveValue(15);
+    expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 seconds/)).toBeInTheDocument();
+  });
+
+  test('changing random delay spinner sends correct API call', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 10,
+        last_random_delay: 3,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Random Extra Delay/i)).toBeInTheDocument();
+    });
+    const spinner = screen.getByLabelText(/Random Extra Delay/i);
+    await userEvent.clear(spinner);
+    await userEvent.type(spinner, '20');
+    // Wait for debounce and API call
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/set_auto_redial'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"random_delay":20')
+        })
+      );
+    });
+  });
+
+  test('shows 0 if no last random value is reported', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 0,
+        last_random_delay: 0,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
+      expect(screen.getByText(/0 seconds/)).toBeInTheDocument();
+    });
+  });
+});
