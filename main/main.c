@@ -457,7 +457,7 @@ static esp_err_t redial_get_handler(httpd_req_t *req)
     }
 
     ESP_LOGI(TAG, "HTTP: Received /redial command.");
-    esp_hf_client_dial("REDIAL"); // Send the redial command
+    esp_hf_client_dial(NULL); // Send the redial command - NULL
 
     httpd_resp_send_json(req, "{\"message\":\"Redial command sent\"}");
     return ESP_OK;
