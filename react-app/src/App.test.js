@@ -269,10 +269,8 @@ describe('Random Delay Spinner and Readout', () => {
     });
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByLabelText(/Random Extra Delay/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Random Extra Delay/i)).toHaveValue(15);
     });
-    const spinner = screen.getByLabelText(/Random Extra Delay/i);
-    expect(spinner).toHaveValue(15);
     expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
     expect(screen.getByText(/7 seconds/)).toBeInTheDocument();
   });
