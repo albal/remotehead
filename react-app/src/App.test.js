@@ -273,10 +273,10 @@ describe('Random Delay Spinner and Readout', () => {
     });
     expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
     expect(
-      screen.getByText((content, node) =>
-        node.textContent.trim().endsWith('7 seconds')
-      )
-    ).toBeInTheDocument();
+      screen.getAllByText((content, node) =>
+        node.tagName === 'P' && node.textContent.trim().endsWith('7 seconds')
+      ).length
+    ).toBeGreaterThan(0);
   });
 
   test('changing random delay spinner sends correct API call', async () => {
