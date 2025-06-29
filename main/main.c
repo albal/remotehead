@@ -1006,6 +1006,11 @@ void app_main(void)
     // Register GAP callback
     esp_bt_gap_register_callback(esp_bt_gap_cb);
 
+    // Set Class of Device to Audio/Video with Headset minor class
+    // Combined CoD: Audio service (0x200000) + Audio/Video major (0x0400) + Headset minor (0x04) = 0x200404
+    esp_bt_cod_t cod = {.cod = 0x200404};
+    esp_bt_gap_set_cod(cod, ESP_BT_INIT_COD);
+
     // Set discoverable and connectable
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     
