@@ -1,3 +1,5 @@
+import './index.css';
+import './fallback-tailwind.css';
 import React, { useState, useEffect, useCallback } from 'react';
 
 // Main App component for the ESP32 Bluetooth Redial Controller
