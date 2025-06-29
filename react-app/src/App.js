@@ -20,6 +20,7 @@ const App = () => {
   // New state for random delay and last random value
   const [redialRandomDelay, setRedialRandomDelay] = useState(0);
   const [lastRandomDelay, setLastRandomDelay] = useState(0);
+  const [lastCallFailed, setLastCallFailed] = useState(false); // New: track last call failure
 
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
@@ -47,8 +48,9 @@ const App = () => {
           setEsp32WifiMode(data.wifi_mode);
           setAutoRedialEnabled(data.auto_redial_enabled);
           setRedialPeriod(data.redial_period);
-          setRedialRandomDelay(data.redial_random_delay || 0); // New
-          setLastRandomDelay(data.last_random_delay || 0); // New
+          setRedialRandomDelay(data.redial_random_delay || 0);
+          setLastRandomDelay(data.last_random_delay || 0);
+          setLastCallFailed(!!data.last_call_failed); // New
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -237,6 +239,11 @@ const App = () => {
           <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
             Automatic Redial Settings
           </h2>
+          {lastCallFailed && (
+            <div className="mb-4 p-3 rounded-lg bg-red-100 border border-red-300 text-red-800 font-semibold text-center">
+              Last call failed. Automatic redial has been disabled.
+            </div>
+          )}
           <div className="flex items-center mb-4">
             <input
               type="checkbox"
