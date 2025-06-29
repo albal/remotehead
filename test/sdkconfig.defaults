@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2022-2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-License-Identifier: CC0-1.0
+
+# Test configuration for ESP32 Remotehead project
+CONFIG_UNITY_ENABLE_FLOAT=y
+CONFIG_UNITY_ENABLE_DOUBLE=y
+CONFIG_UNITY_ENABLE_64BIT=y
+CONFIG_UNITY_ENABLE_MEMORY_TESTS=y
+CONFIG_UNITY_ENABLE_BACKTRACE_ON_FAIL=y
+
+# Disable components that aren't needed for testing
+CONFIG_BT_ENABLED=n
+CONFIG_WIFI_ENABLED=n
+
+# Enable NVS for testing
+CONFIG_NVS_ENCRYPTION=n
+
+# HTTP Server for handler testing
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# Increase main task stack size for tests
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Enable JSON library
+CONFIG_HEAP_TRACING_STACK_DEPTH=10
+
+# Logging level for tests
+CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
