@@ -1,0 +1,10 @@
+{
+  "short_name": "ESP32 Redialer",
+  "name": "ESP32 Redialer Web UI",
+  "description": "Web interface for ESP32 Bluetooth Headset Controller",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff",
+  "icons": []
+}
