@@ -1006,6 +1006,22 @@ void app_main(void)
     // Register GAP callback
     esp_bt_gap_register_callback(esp_bt_gap_cb);
 
+    // Set Class of Device to identify as Audio Headset device
+    // CoD: Service=Audio(0x20) + Major=Audio/Video(0x04) + Minor=Headset(0x04)
+    esp_bt_cod_t cod;
+    // Initialize with zeros first
+    memset(&cod, 0, sizeof(cod));
+    // Set the combined 24-bit CoD value (Audio service + Audio/Video major + Headset minor)
+    uint32_t class_of_device = 0x200404;
+    memcpy(&cod, &class_of_device, sizeof(esp_bt_cod_t));
+    
+    esp_err_t ret_cod = esp_bt_gap_set_cod(cod, ESP_BT_INIT_COD);
+    if (ret_cod == ESP_OK) {
+        ESP_LOGI(TAG, "Successfully set Class of Device for Audio Headset");
+    } else {
+        ESP_LOGW(TAG, "Failed to set Class of Device: %s", esp_err_to_name(ret_cod));
+    }
+
     // Set discoverable and connectable
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     
