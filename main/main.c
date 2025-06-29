@@ -178,6 +178,13 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             ESP_LOGI(TAG, "Voice recognition event received");
             break;
         case ESP_HF_CLIENT_CIND_CALL_EVT:
+            // param->call.status: 0 = no call, 1 = active call
+            if (param->call.status == 0) {
+                // Call ended normally
+                last_call_failed = false;
+            }
+            ESP_LOGI(TAG, "Call indicator status update received");
+            break;
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT:
         case ESP_HF_CLIENT_CIND_SERVICE_AVAILABILITY_EVT:
             ESP_LOGI(TAG, "Call indicator status update received");
