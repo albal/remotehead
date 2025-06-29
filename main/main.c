@@ -40,6 +40,8 @@ esp_netif_t *sta_netif = NULL; // STA network interface handle
 // Auto Redial Settings
 bool auto_redial_enabled = false;
 uint32_t redial_period_seconds = 60; // Default to 60 seconds
+uint32_t redial_random_delay_seconds = 0; // New: random delay in seconds
+uint32_t last_random_delay_used = 0; // New: last random value used
 
 // Timer handle for automatic redial
 esp_timer_handle_t auto_redial_timer;
@@ -53,6 +55,7 @@ TaskHandle_t morse_code_task_handle = NULL;
 #define NVS_KEY_PASSWORD "password"
 #define NVS_KEY_AUTO_REDIAL_ENABLED "auto_en"
 #define NVS_KEY_REDIAL_PERIOD "redial_period"
+#define NVS_KEY_AUTO_REDIAL_RANDOM "redial_rand"
 
 // AP Mode Configuration
 #define AP_SSID "REMOTEHEAD"
@@ -95,7 +98,7 @@ static void start_wifi_sta(const char *ssid, const char *password);
 static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ssid_len, size_t password_len);
 static void save_wifi_credentials_to_nvs(const char *ssid, const char *password);
 static bool load_auto_redial_settings_from_nvs(void);
-static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period);
+static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay);
 void auto_redial_timer_callback(void* arg);
 static void update_auto_redial_timer(void);
 static esp_err_t serve_static_file(httpd_req_t *req); // New static file server handler
@@ -308,13 +311,23 @@ static bool load_auto_redial_settings_from_nvs(void) {
         auto_redial_enabled = (enabled_u8 != 0);
     }
 
+    // New: Load random delay
+    err = nvs_get_u32(nvs_handle, NVS_KEY_AUTO_REDIAL_RANDOM, &redial_random_delay_seconds);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        redial_random_delay_seconds = 0;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) reading redial random delay from NVS!", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return false;
+    }
+
     nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds",
-             auto_redial_enabled ? "true" : "false", redial_period_seconds);
+    ESP_LOGI(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
+             auto_redial_enabled ? "true" : "false", redial_period_seconds, redial_random_delay_seconds);
     return true;
 }
 
-static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period) {
+static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
@@ -332,14 +345,20 @@ static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period) {
         ESP_LOGE(TAG, "Error (%s) writing redial period to NVS!", esp_err_to_name(err));
     }
 
+    // New: Save random delay
+    err = nvs_set_u32(nvs_handle, NVS_KEY_AUTO_REDIAL_RANDOM, random_delay);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) writing redial random delay to NVS!", esp_err_to_name(err));
+    }
+
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error (%s) committing NVS auto redial changes!", esp_err_to_name(err));
     }
 
     nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds",
-             enabled ? "true" : "false", period);
+    ESP_LOGI(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
+             enabled ? "true" : "false", period, random_delay);
 }
 
 
@@ -517,6 +536,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 
     cJSON_AddBoolToObject(root, "auto_redial_enabled", auto_redial_enabled);
     cJSON_AddNumberToObject(root, "redial_period", redial_period_seconds);
+    cJSON_AddNumberToObject(root, "redial_random_delay", redial_random_delay_seconds); // New
+    cJSON_AddNumberToObject(root, "last_random_delay", last_random_delay_used); // New
 
     cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "ESP32 Bluetooth connected to phone." : "ESP32 Bluetooth disconnected.");
 
@@ -591,16 +612,21 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
 
     cJSON *enabled_json = cJSON_GetObjectItemCaseSensitive(root, "enabled");
     cJSON *period_json = cJSON_GetObjectItemCaseSensitive(root, "period");
+    cJSON *random_json = cJSON_GetObjectItemCaseSensitive(root, "random_delay"); // New
 
     if (cJSON_IsBool(enabled_json) && cJSON_IsNumber(period_json)) {
         auto_redial_enabled = cJSON_IsTrue(enabled_json);
         redial_period_seconds = (uint32_t)cJSON_GetNumberValue(period_json);
+        if (cJSON_IsNumber(random_json)) {
+            redial_random_delay_seconds = (uint32_t)cJSON_GetNumberValue(random_json);
+        }
 
         // Clamp period to valid range
         if (redial_period_seconds < 10) redial_period_seconds = 10;
         if (redial_period_seconds > 84600) redial_period_seconds = 84600;
+        if (redial_random_delay_seconds > 86400) redial_random_delay_seconds = 86400;
 
-        save_auto_redial_settings_to_nvs(auto_redial_enabled, redial_period_seconds);
+        save_auto_redial_settings_to_nvs(auto_redial_enabled, redial_period_seconds, redial_random_delay_seconds);
         update_auto_redial_timer(); // Update timer based on new settings
 
         cJSON_Delete(root);
@@ -765,8 +791,16 @@ static void stop_webserver(httpd_handle_t server)
 void auto_redial_timer_callback(void* arg)
 {
     if (is_bluetooth_connected && auto_redial_enabled && current_wifi_mode == WIFI_MODE_STA) {
-        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command...");
+        uint32_t extra = 0;
+        if (redial_random_delay_seconds > 0) {
+            extra = rand() % (redial_random_delay_seconds + 1); // 0..random_delay
+        }
+        last_random_delay_used = extra;
+        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command... (random extra delay: %lu)", extra);
         esp_hf_client_dial(NULL); // Use NULL for last number redial
+        if (extra > 0) {
+            vTaskDelay(pdMS_TO_TICKS(extra * 1000)); // Wait extra seconds before next period
+        }
     } else {
         ESP_LOGD(TAG, "Auto Redial Timer: Conditions not met for redial (BT Connected: %d, Auto Enabled: %d, WiFi Mode: %d)",
                  is_bluetooth_connected, auto_redial_enabled, current_wifi_mode);
@@ -779,6 +813,12 @@ static void update_auto_redial_timer(void) {
         if (esp_timer_is_active(auto_redial_timer)) {
             ESP_ERROR_CHECK(esp_timer_stop(auto_redial_timer));
             ESP_LOGI(TAG, "Stopped existing auto redial timer.");
+        }
+        // Seed random if not already seeded
+        static bool seeded = false;
+        if (!seeded) {
+            srand((unsigned int)time(NULL));
+            seeded = true;
         }
         ESP_ERROR_CHECK(esp_timer_start_periodic(auto_redial_timer, redial_period_seconds * 1000 * 1000)); // Period in microseconds
         ESP_LOGI(TAG, "Started auto redial timer with period %lu seconds.", redial_period_seconds);
