@@ -245,4 +245,43 @@ describe('App Component', () => {
       expect(screen.getByLabelText(/Redial Period \(seconds\)/i)).toBeInTheDocument();
     });
   });
+
+  test('shows WiFi configuration section when in AP mode', async () => {
+    // Default mock is AP mode
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('Configure Home Wi-Fi')).toBeInTheDocument();
+      expect(screen.getByLabelText(/Home Wi-Fi SSID/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Home Wi-Fi Password/i)).toBeInTheDocument();
+      expect(screen.getByText('Configure ESP32 Wi-Fi')).toBeInTheDocument();
+    });
+  });
+
+  test('hides WiFi configuration section when in STA mode', async () => {
+    // Mock response for STA mode (connected to WiFi)
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: false,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: false,
+        redial_period: 60,
+        message: 'ESP32 connected to home network.'
+      })
+    });
+
+    render(<App />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('STA')).toBeInTheDocument();
+    });
+
+    // WiFi configuration section should not be present
+    expect(screen.queryByText('Configure Home Wi-Fi')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Home Wi-Fi SSID/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Home Wi-Fi Password/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Configure ESP32 Wi-Fi')).not.toBeInTheDocument();
+  });
 });
