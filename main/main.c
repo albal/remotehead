@@ -106,6 +106,32 @@ static void morse_digit(char digit);
 static void morse_ip_address(const char* ip_addr);
 static void init_led_gpio(void);
 static void signal_ip_change(void);
+static void url_decode(char *str);
+
+// --- Helper function to decode URL-encoded strings ---
+static void url_decode(char *str) {
+    char *p_str = str;
+    char *p_decoded = str;
+    while (*p_str) {
+        if (*p_str == '%') {
+            if (p_str[1] && p_str[2]) {
+                // Read the two hex digits that follow '%'
+                char hex_buf[3] = { p_str[1], p_str[2], '\0' };
+                // Convert the hex value to a character
+                *p_decoded++ = (char)strtol(hex_buf, NULL, 16);
+                p_str += 3; // Move the source pointer past the encoded part (e.g., past "%2C")
+            }
+        } else if (*p_str == '+') {
+            // A '+' in a URL represents a space
+            *p_decoded++ = ' ';
+            p_str++;
+        } else {
+            // Copy the character as-is
+            *p_decoded++ = *p_str++;
+        }
+    }
+    *p_decoded = '\0'; // Null-terminate the new, shorter string
+}
 
 // --- HFP Client Callback ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
@@ -461,6 +487,7 @@ static esp_err_t dial_get_handler(httpd_req_t *req)
             memset(param, 0, sizeof(param)); // Clear buffer
 
             if (httpd_query_key_value(buf, "number", param, sizeof(param)) == ESP_OK) {
+                url_decode(param);
                 ESP_LOGI(TAG, "HTTP: Received /dial command for number: %s", param);
                 esp_hf_client_dial(param); // Send the dial command with the number
                 free(buf);
