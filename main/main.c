@@ -1006,6 +1006,21 @@ void app_main(void)
     // Register GAP callback
     esp_bt_gap_register_callback(esp_bt_gap_cb);
 
+    // Set Security Parameters for Secure Simple Pairing
+    esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE; // No Input, No Output
+    esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
+
+    /*
+     * Set PIN type and code for legacy pairing
+     * This is fallback for older devices, SSP will be used for modern phones
+     */
+    esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
+    esp_bt_pin_code_t pin_code;
+    const char *pin_str = "1234";
+    memcpy(pin_code, pin_str, 4);
+    esp_bt_gap_set_pin(pin_type, 4, pin_code);
+    
     // Set Class of Device to identify as Audio Headset device
     // CoD: Service=Audio(0x20) + Major=Audio/Video(0x04) + Minor=Headset(0x04)
     // Set Class of Device to identify as an Audio Headset device
