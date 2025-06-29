@@ -157,8 +157,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             }
             break;
         case ESP_HF_CLIENT_AT_RESPONSE_EVT:
-            if (param->at_response.code == ESP_HF_AT_RESPONSE_ERROR ||
-                param->at_response.code == ESP_HF_AT_RESPONSE_CME) {
+            if (param->at_response.code == ESP_HF_AT_RESPONSE_ERROR) {
                 ESP_LOGW(TAG, "Call failed: AT response error code %d", param->at_response.cme);
                 last_call_failed = true;
                 if (auto_redial_enabled) {
