@@ -239,7 +239,7 @@ const App = () => {
           <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
             Automatic Redial Settings
           </h2>
-          {lastCallFailed && (
+          {(lastCallFailed && !autoRedialEnabled) && (
             <div className="mb-4 p-3 rounded-lg bg-red-100 border border-red-300 text-red-800 font-semibold text-center">
               Last call failed. Automatic redial has been disabled.
             </div>
