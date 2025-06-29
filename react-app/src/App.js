@@ -2,8 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 // Main App component for the ESP32 Bluetooth Redial Controller
 const App = () => {
+  // Function to get initial IP from current URL
+  const getInitialIp = () => {
+    // If we're not on localhost/development, use the hostname from the current URL
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      return window.location.hostname;
+    }
+    // Default IP for AP mode when in development
+    return '192.168.4.1';
+  };
+
   // State variables for managing the UI and communication
-  const [esp32Ip, setEsp32Ip] = useState('192.168.4.1'); // Default IP for AP mode
+  const [esp32Ip, setEsp32Ip] = useState(getInitialIp());
   const [homeWifiSsid, setHomeWifiSsid] = useState(''); // User's home Wi-Fi SSID
   const [homeWifiPassword, setHomeWifiPassword] = useState(''); // User's home Wi-Fi password
   const [dialNumber, setDialNumber] = useState(''); // Number to dial

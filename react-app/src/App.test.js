@@ -7,8 +7,15 @@ import App from './App';
 global.fetch = jest.fn();
 
 describe('App Component', () => {
+  // Store original window.location
+  const originalLocation = window.location;
+
   beforeEach(() => {
     fetch.mockClear();
+    
+    // Reset window.location to localhost for most tests
+    delete window.location;
+    window.location = { hostname: 'localhost' };
     
     // Default mock response
     fetch.mockResolvedValue({
@@ -22,6 +29,11 @@ describe('App Component', () => {
         message: 'ESP32 Bluetooth disconnected.'
       })
     });
+  });
+
+  afterEach(() => {
+    // Restore original window.location
+    window.location = originalLocation;
   });
 
   test('renders main UI elements', async () => {
@@ -234,6 +246,39 @@ describe('App Component', () => {
       expect(screen.getByLabelText(/Home Wi-Fi SSID/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/Home Wi-Fi Password/i)).toBeInTheDocument();
       expect(screen.getByText('Configure ESP32 Wi-Fi')).toBeInTheDocument();
+    });
+  });
+
+  test('automatically detects IP from browser URL when not on localhost', async () => {
+    // Mock window.location for a real ESP32 IP
+    delete window.location;
+    window.location = { hostname: '192.168.1.100' };
+
+    render(<App />);
+    
+    await waitFor(() => {
+      // Check that the IP input field shows the detected IP from the URL
+      expect(screen.getByDisplayValue('192.168.1.100')).toBeInTheDocument();
+    });
+
+    // Verify that the status API call was made to the detected IP
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.1.100/status', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    });
+  });
+
+  test('uses default IP when on localhost', async () => {
+    // localhost is already set in beforeEach
+    render(<App />);
+    
+    await waitFor(() => {
+      // Check that the IP input field shows the default IP
+      expect(screen.getByDisplayValue('192.168.4.1')).toBeInTheDocument();
     });
   });
 
