@@ -766,7 +766,7 @@ void auto_redial_timer_callback(void* arg)
 {
     if (is_bluetooth_connected && auto_redial_enabled && current_wifi_mode == WIFI_MODE_STA) {
         ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command...");
-        esp_hf_client_dial("REDIAL");
+        esp_hf_client_dial(NULL); // Use NULL for last number redial
     } else {
         ESP_LOGD(TAG, "Auto Redial Timer: Conditions not met for redial (BT Connected: %d, Auto Enabled: %d, WiFi Mode: %d)",
                  is_bluetooth_connected, auto_redial_enabled, current_wifi_mode);
