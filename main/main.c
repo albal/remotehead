@@ -1008,12 +1008,11 @@ void app_main(void)
 
     // Set Class of Device to identify as Audio Headset device
     // CoD: Service=Audio(0x20) + Major=Audio/Video(0x04) + Minor=Headset(0x04)
+    // Set Class of Device to identify as an Audio Headset device
     esp_bt_cod_t cod;
-    // Initialize with zeros first
-    memset(&cod, 0, sizeof(cod));
-    // Set the combined 24-bit CoD value (Audio service + Audio/Video major + Headset minor)
-    uint32_t class_of_device = 0x200404;
-    memcpy(&cod, &class_of_device, sizeof(esp_bt_cod_t));
+    cod.major = 0x04;     // Major Device Class: Audio/Video
+    cod.minor = 0x04;     // Minor Device Class: Headset
+    cod.service = 0x20;   // Service Class: Audio
     
     esp_err_t ret_cod = esp_bt_gap_set_cod(cod, ESP_BT_INIT_COD);
     if (ret_cod == ESP_OK) {
