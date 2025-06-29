@@ -396,6 +396,7 @@ static void start_wifi_sta(const char *ssid, const char *password) {
 
     // Create STA interface only if it doesn't already exist
     if (sta_netif == NULL) {
+        ESP_LOGI(TAG, "Creating STA interface");
         sta_netif = esp_netif_create_default_wifi_sta(); // Create STA interface
     }
 
@@ -410,8 +411,13 @@ static void start_wifi_sta(const char *ssid, const char *password) {
     wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
     wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
 
+    ESP_LOGI(TAG, "Setting WiFi mode to STA");
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    
+    ESP_LOGI(TAG, "Setting STA configuration for SSID: %s", ssid);
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    
+    ESP_LOGI(TAG, "Starting WiFi in STA mode");
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
@@ -527,13 +533,18 @@ static esp_err_t configure_wifi_post_handler(httpd_req_t *req)
 
         save_wifi_credentials_to_nvs(ssid_json->valuestring, password_json->valuestring);
 
+        // Send response first, then switch WiFi modes
+        cJSON_Delete(root);
+        httpd_resp_send_json(req, "{\"message\":\"Wi-Fi credentials received and device is attempting to connect to home network.\"}\n");
+
         ESP_LOGI(TAG, "Switching to STA mode with SSID: %s", ssid_json->valuestring);
+        // Small delay to ensure HTTP response is sent before stopping server
+        vTaskDelay(pdMS_TO_TICKS(100));
+        
         stop_webserver(server); // Stop server before Wi-Fi mode change
         server = NULL; // Clear server handle
         start_wifi_sta(ssid_json->valuestring, password_json->valuestring); // Start STA mode
 
-        cJSON_Delete(root);
-        httpd_resp_send_json(req, "{\"message\":\"Wi-Fi credentials received and device is attempting to connect to home network.\"}\n");
         return ESP_OK;
 
     } else {
