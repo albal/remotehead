@@ -98,6 +98,7 @@ static bool load_auto_redial_settings_from_nvs(void);
 static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period);
 void auto_redial_timer_callback(void* arg);
 static void update_auto_redial_timer(void);
+static void selective_factory_reset(void);
 static esp_err_t serve_static_file(httpd_req_t *req); // New static file server handler
 static void morse_code_led_task(void *pvParameters);
 static void morse_dot(void);
@@ -903,6 +904,62 @@ static esp_err_t init_spiffs(void)
     return ret;
 }
 
+// --- Selective Factory Reset Function ---
+static void selective_factory_reset(void)
+{
+    ESP_LOGW(TAG, "Performing selective factory reset - erasing WiFi and Bluetooth pairing data only");
+    
+    // Erase WiFi credentials from our application namespace
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Erasing WiFi credentials from NVS...");
+        
+        // Erase WiFi SSID and password
+        nvs_erase_key(nvs_handle, NVS_KEY_SSID);
+        nvs_erase_key(nvs_handle, NVS_KEY_PASSWORD);
+        
+        // Commit changes
+        err = nvs_commit(nvs_handle);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "WiFi credentials erased successfully");
+        } else {
+            ESP_LOGE(TAG, "Failed to commit WiFi credential erasure: %s", esp_err_to_name(err));
+        }
+        
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS namespace for WiFi credential erasure: %s", esp_err_to_name(err));
+    }
+    
+    // Erase Bluetooth pairing data from bt_config namespace
+    // This is where ESP32 Bluetooth stack stores pairing information
+    err = nvs_open("bt_config", NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Erasing Bluetooth pairing data from NVS...");
+        
+        // Erase the entire bt_config namespace to clear all Bluetooth pairing data
+        err = nvs_erase_all(nvs_handle);
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs_handle);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "Bluetooth pairing data erased successfully");
+            } else {
+                ESP_LOGE(TAG, "Failed to commit Bluetooth pairing data erasure: %s", esp_err_to_name(err));
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to erase Bluetooth pairing data: %s", esp_err_to_name(err));
+        }
+        
+        nvs_close(nvs_handle);
+    } else {
+        // bt_config namespace might not exist if no devices have been paired
+        ESP_LOGI(TAG, "bt_config namespace not found or inaccessible - no Bluetooth pairing data to erase");
+    }
+    
+    ESP_LOGI(TAG, "Selective factory reset completed - WiFi and Bluetooth pairing data cleared");
+}
+
 // --- Main Application Entry Point ---
 void app_main(void)
 {
@@ -914,23 +971,11 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(50)); // Allow pin to settle
 
     if (gpio_get_level(FACTORY_RESET_PIN) == 0) { // Pin pulled low
-        ESP_LOGW(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Erasing NVS and SPIFFS...", FACTORY_RESET_PIN);
-        ret = nvs_flash_erase();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "NVS erase failed: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(TAG, "NVS erased successfully.");
-        }
+        ESP_LOGW(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Performing selective factory reset...", FACTORY_RESET_PIN);
         
-        // Also unmount and format SPIFFS
-        esp_vfs_spiffs_unregister(NULL); // Unregister any existing mount
-        ret = esp_spiffs_format(NULL); // Format default SPIFFS partition
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "SPIFFS format failed: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(TAG, "SPIFFS formatted successfully. Performing factory reset.");
-        }
-        // After erase/format, re-initialize NVS and SPIFFS will be formatted on next mount if needed
+        // Perform selective factory reset - only erase WiFi and Bluetooth pairing data
+        // Do NOT erase SPIFFS (preserves React web app) or other NVS settings
+        selective_factory_reset();
     } else {
         ESP_LOGI(TAG, "FACTORY RESET PIN (GPIO%d) is HIGH. Proceeding with normal boot.", FACTORY_RESET_PIN);
     }
@@ -938,7 +983,7 @@ void app_main(void)
     // Initialize NVS
     ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase()); // Should not happen if erase above worked
+        ESP_ERROR_CHECK(nvs_flash_erase()); // Full erase only if NVS version is incompatible
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
