@@ -222,6 +222,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                         // ******************************************************
                         ESP_LOGE(TAG, "CALL FAILED! The call did not connect (Busy, Invalid Number, etc.).");
                         last_call_failed = true;
+                        auto_redial_enabled = false;
                     }
                     // Reset the flag regardless of success or failure, as the setup process is over.
                     g_is_outgoing_call_in_progress = false;
