@@ -164,15 +164,15 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             switch ((int)param->at_response.code) {
                 case ESP_HF_AT_RESPONSE_ERROR:
                     ESP_LOGW(TAG, "Call failed: AT response error code %d", param->at_response.cme);
-                    last_call_failed = true;
-                    if (auto_redial_enabled) {
-                        auto_redial_enabled = false;
-                        save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds);
+                    if (g_is_outgoing_call_in_progress) {
+                        last_call_failed = true;
+                        if (auto_redial_enabled) {
+                            auto_redial_enabled = false;
+                            save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds);
+                        }
                     }
                     break;
-                default:
-                    last_call_failed = false;
-                    break;
+                // No default: do not change last_call_failed here
             }
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
