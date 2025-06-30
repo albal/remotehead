@@ -46,7 +46,7 @@ uint32_t last_random_delay_used = 0; // New: last random value used
 
 // --- HFP Outgoing Call State Tracking ---
 static volatile bool g_is_outgoing_call_in_progress = false; // Tracks outgoing call process
-static volatile esp_hf_client_call_status_t g_call_status = ESP_HF_CLIENT_CALL_STATUS_NO_CALLS; // Tracks 'call' indicator
+static volatile esp_hf_call_status_t g_call_status = ESP_HF_CALL_STATUS_NO_CALLS; // Tracks 'call' indicator
 
 // Timer handle for automatic redial
 esp_timer_handle_t auto_redial_timer;
@@ -186,13 +186,13 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             g_call_status = param->call.status;
             ESP_LOGI(TAG, "Call Indicator status: %d", g_call_status);
 
-            if (g_call_status == ESP_HF_CLIENT_CALL_STATUS_CALL_ACTIVE && g_is_outgoing_call_in_progress) {
+            if (g_call_status == ESP_HF_CALL_STATUS_CALL_ACTIVE && g_is_outgoing_call_in_progress) {
                 // The call successfully connected!
                 ESP_LOGI(TAG, "Outgoing call has been answered and is now active.");
                 g_is_outgoing_call_in_progress = false; // Reset the flag
                 last_call_failed = false;
             } 
-            else if (g_call_status == ESP_HF_CLIENT_CALL_STATUS_NO_CALLS && !g_is_outgoing_call_in_progress) {
+            else if (g_call_status == ESP_HF_CALL_STATUS_NO_CALLS && !g_is_outgoing_call_in_progress) {
                 // This detects when a previously active call has been ended normally by the recipient or user.
                 ESP_LOGI(TAG, "Active call has ended.");
                 last_call_failed = false;
@@ -200,23 +200,23 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             break;
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT: {
             // This event corresponds to the 'callsetup' indicator
-            esp_hf_client_call_setup_status_t call_setup_status = param->call_setup_status.status;
+            esp_hf_call_setup_status_t call_setup_status = param->call_setup.status;
             ESP_LOGI(TAG, "Call Setup Indicator status: %d", call_setup_status);
 
-            if (call_setup_status == ESP_HF_CLIENT_CALL_SETUP_STATUS_OUTGOING_DIALING ||
-                call_setup_status == ESP_HF_CLIENT_CALL_SETUP_STATUS_OUTGOING_ALERTING)
+            if (call_setup_status == ESP_HF_CALL_SETUP_STATUS_OUTGOING_DIALING ||
+                call_setup_status == ESP_HF_CALL_SETUP_STATUS_OUTGOING_ALERTING)
             {
                 // We have started an outgoing call. Set our flag.
                 g_is_outgoing_call_in_progress = true;
                 ESP_LOGI(TAG, "Outgoing call process started (Dialing/Alerting)...");
             }
-            else if (call_setup_status == ESP_HF_CLIENT_CALL_SETUP_STATUS_NONE)
+            else if (call_setup_status == ESP_HF_CALL_SETUP_STATUS_IDLE)
             {
                 // The call setup process has ended. Now we check if it failed.
                 if (g_is_outgoing_call_in_progress) {
                     // We were trying to make a call, but the setup process ended.
                     // Check if the call ever became active.
-                    if (g_call_status == ESP_HF_CLIENT_CALL_STATUS_NO_CALLS) {
+                    if (g_call_status == ESP_HF_CALL_STATUS_NO_CALLS) {
                         // ******************************************************
                         // ***** CALL FAILED DETECTION *****
                         // ******************************************************
