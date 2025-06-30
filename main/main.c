@@ -186,7 +186,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             g_call_status = param->call.status;
             ESP_LOGI(TAG, "Call Indicator status: %d", g_call_status);
 
-            if (g_call_status == ESP_HF_CALL_STATUS_IN_PROGRESS && g_is_outgoing_call_in_progress) {
+            if (g_call_status == ESP_HF_CALL_STATUS_CALL_IN_PROGRESS && g_is_outgoing_call_in_progress) {
                 // The call successfully connected!
                 ESP_LOGI(TAG, "Outgoing call has been answered and is now active.");
                 g_is_outgoing_call_in_progress = false; // Reset the flag
