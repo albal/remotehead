@@ -31,7 +31,7 @@
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOG##level(tag, "[%5lu.%06lu] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOG##level(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGI_TS(tag, format, ...) LOG_WITH_TIMESTAMP(I, tag, format, ##__VA_ARGS__)
