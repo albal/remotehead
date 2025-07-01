@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h> // For stat()
+#include <time.h>
+#include <sys/time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,6 +13,7 @@
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h" // Ensure this is included
 #include "esp_timer.h"
+#include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_wifi.h"
@@ -22,6 +25,19 @@
 #include "esp_spiffs.h" // For SPIFFS file system
 
 #define TAG "HFP_REDIAL_API"
+
+// Timestamped logging macros in dmesg style [seconds.microseconds]
+#define LOG_WITH_TIMESTAMP(level, tag, format, ...) do { \
+    uint64_t timestamp_us = esp_timer_get_time(); \
+    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
+    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
+    ESP_LOG##level(tag, "[%5lu.%06lu] " format, seconds, microseconds, ##__VA_ARGS__); \
+} while(0)
+
+#define ESP_LOGI_TS(tag, format, ...) LOG_WITH_TIMESTAMP(I, tag, format, ##__VA_ARGS__)
+#define ESP_LOGW_TS(tag, format, ...) LOG_WITH_TIMESTAMP(W, tag, format, ##__VA_ARGS__)
+#define ESP_LOGE_TS(tag, format, ...) LOG_WITH_TIMESTAMP(E, tag, format, ##__VA_ARGS__)
+#define ESP_LOGD_TS(tag, format, ...) LOG_WITH_TIMESTAMP(D, tag, format, ##__VA_ARGS__)
 
 // Helper function to send JSON response
 static esp_err_t httpd_resp_send_json(httpd_req_t *req, const char *json_str) {
@@ -116,6 +132,8 @@ static void morse_ip_address(const char* ip_addr);
 static void init_led_gpio(void);
 static void signal_ip_change(void);
 static void url_decode(char *str);
+static void init_ntp(void);
+static void ntp_sync_callback(struct timeval *tv);
 
 // --- Helper function to decode URL-encoded strings ---
 static void url_decode(char *str) {
@@ -145,26 +163,26 @@ static void url_decode(char *str) {
 // --- HFP Client Callback ---
 static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *param)
 {
-    ESP_LOGI(TAG, "HFP_CLIENT_EVT: %d", event);
+    ESP_LOGI_TS(TAG, "HFP_CLIENT_EVT: %d", event);
 
     switch (event) {
         case ESP_HF_CLIENT_CONNECTION_STATE_EVT:
             if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
-                ESP_LOGI(TAG, "HFP Client Connected to phone!");
+                ESP_LOGI_TS(TAG, "HFP Client Connected to phone!");
                 is_bluetooth_connected = true;
                 update_auto_redial_timer(); // Update timer state
             } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
-                ESP_LOGI(TAG, "HFP Client Disconnected from phone!");
+                ESP_LOGI_TS(TAG, "HFP Client Disconnected from phone!");
                 is_bluetooth_connected = false;
                 update_auto_redial_timer(); // Update timer state
             } else {
-                ESP_LOGE(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
+                ESP_LOGE_TS(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
             }
             break;
         case ESP_HF_CLIENT_AT_RESPONSE_EVT:
             switch ((int)param->at_response.code) {
                 case ESP_HF_AT_RESPONSE_ERROR:
-                    ESP_LOGW(TAG, "Call failed: AT response error code %d", param->at_response.cme);
+                    ESP_LOGW_TS(TAG, "Call failed: AT response error code %d", param->at_response.cme);
                     if (g_is_outgoing_call_in_progress) {
                         last_call_failed = true;
                         if (auto_redial_enabled) {
@@ -177,39 +195,39 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             }
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
-            ESP_LOGI(TAG, "HFP Audio State: %d", param->audio_stat.state);
+            ESP_LOGI_TS(TAG, "HFP Audio State: %d", param->audio_stat.state);
             break;
         case ESP_HF_CLIENT_BVRA_EVT:
-            ESP_LOGI(TAG, "Voice recognition event received");
+            ESP_LOGI_TS(TAG, "Voice recognition event received");
             break;
         case ESP_HF_CLIENT_CIND_CALL_EVT:
             // This event corresponds to the 'call' indicator
             g_call_status = param->call.status;
-            ESP_LOGI(TAG, "Call Indicator status: %d", g_call_status);
+            ESP_LOGI_TS(TAG, "Call Indicator status: %d", g_call_status);
 
             if (g_call_status == ESP_HF_CALL_STATUS_CALL_IN_PROGRESS && g_is_outgoing_call_in_progress) {
                 // The call successfully connected!
-                ESP_LOGI(TAG, "Outgoing call has been answered and is now active.");
+                ESP_LOGI_TS(TAG, "Outgoing call has been answered and is now active.");
                 g_is_outgoing_call_in_progress = false; // Reset the flag
                 last_call_failed = false;
             } 
             else if (g_call_status == ESP_HF_CALL_STATUS_NO_CALLS && !g_is_outgoing_call_in_progress) {
                 // This detects when a previously active call has been ended normally by the recipient or user.
-                ESP_LOGI(TAG, "Active call has ended.");
+                ESP_LOGI_TS(TAG, "Active call has ended.");
                 last_call_failed = false;
             }
             break;
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT: {
             // This event corresponds to the 'callsetup' indicator
             esp_hf_call_setup_status_t call_setup_status = param->call_setup.status;
-            ESP_LOGI(TAG, "Call Setup Indicator status: %d", call_setup_status);
+            ESP_LOGI_TS(TAG, "Call Setup Indicator status: %d", call_setup_status);
 
             if (call_setup_status == ESP_HF_CALL_SETUP_STATUS_OUTGOING_DIALING ||
                 call_setup_status == ESP_HF_CALL_SETUP_STATUS_OUTGOING_ALERTING)
             {
                 // We have started an outgoing call. Set our flag.
                 g_is_outgoing_call_in_progress = true;
-                ESP_LOGI(TAG, "Outgoing call process started (Dialing/Alerting)...");
+                ESP_LOGI_TS(TAG, "Outgoing call process started (Dialing/Alerting)...");
             }
             else if (call_setup_status == ESP_HF_CALL_SETUP_STATUS_IDLE)
             {
@@ -221,7 +239,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                         // ******************************************************
                         // ***** CALL FAILED DETECTION *****
                         // ******************************************************
-                        ESP_LOGE(TAG, "CALL FAILED! The call did not connect (Busy, Invalid Number, etc.).");
+                        ESP_LOGE_TS(TAG, "CALL FAILED! The call did not connect (Busy, Invalid Number, etc.).");
                         last_call_failed = true;
                         auto_redial_enabled = false;
                     }
@@ -232,10 +250,10 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             break;
         }
         case ESP_HF_CLIENT_CIND_SERVICE_AVAILABILITY_EVT:
-            ESP_LOGI(TAG, "Call indicator status update received");
+            ESP_LOGI_TS(TAG, "Call indicator status update received");
             break;
         default:
-            ESP_LOGI(TAG, "Unhandled HFP event: %d", event);
+            ESP_LOGI_TS(TAG, "Unhandled HFP event: %d", event);
             break;
     }
 }
@@ -246,15 +264,15 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
     switch (event) {
         case ESP_BT_GAP_AUTH_CMPL_EVT: {
             if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
-                ESP_LOGI(TAG, "authentication success: %s", param->auth_cmpl.device_name);
+                ESP_LOGI_TS(TAG, "authentication success: %s", param->auth_cmpl.device_name);
                 esp_log_buffer_hex(TAG, param->auth_cmpl.bda, ESP_BD_ADDR_LEN);
             } else {
-                ESP_LOGE(TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
+                ESP_LOGE_TS(TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
             }
             break;
         }
         case ESP_BT_GAP_PIN_REQ_EVT: {
-            ESP_LOGI(TAG, "ESP_BT_GAP_PIN_REQ_EVT");
+            ESP_LOGI_TS(TAG, "ESP_BT_GAP_PIN_REQ_EVT");
             esp_bt_pin_code_t pin_code;
             pin_code[0] = '1'; pin_code[1] = '2'; pin_code[2] = '3'; pin_code[3] = '4';
             esp_bt_gap_pin_reply(param->pin_req.bda, true, 4, pin_code);
@@ -262,19 +280,19 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
         }
 #ifdef CONFIG_BT_SSP_ENABLED
         case ESP_BT_GAP_CFM_REQ_EVT:
-            ESP_LOGI(TAG, "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %lu", param->cfm_req.num_val);
+            ESP_LOGI_TS(TAG, "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %lu", param->cfm_req.num_val);
             esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
             break;
         case ESP_BT_GAP_KEY_NOTIF_EVT:
-            ESP_LOGI(TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey:%lu", param->key_notif.passkey);
+            ESP_LOGI_TS(TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey:%lu", param->key_notif.passkey);
             break;
         case ESP_BT_GAP_KEY_REQ_EVT:
-            ESP_LOGI(TAG, "ESP_BT_GAP_KEY_REQ_EVT");
+            ESP_LOGI_TS(TAG, "ESP_BT_GAP_KEY_REQ_EVT");
             esp_bt_gap_ssp_passkey_reply(param->key_req.bda, true, 0);
             break;
 #endif
         default: {
-            ESP_LOGI(TAG, "GAP EVT: %d", event);
+            ESP_LOGI_TS(TAG, "GAP EVT: %d", event);
             break;
         }
     }
@@ -286,7 +304,7 @@ static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ss
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) opening NVS handle!", esp_err_to_name(err));
         return false;
     }
 
@@ -295,14 +313,14 @@ static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ss
 
     err = nvs_get_str(nvs_handle, NVS_KEY_SSID, ssid, &required_size_ssid);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGE(TAG, "Error (%s) reading SSID from NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) reading SSID from NVS!", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return false;
     }
 
     err = nvs_get_str(nvs_handle, NVS_KEY_PASSWORD, password, &required_size_password);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGE(TAG, "Error (%s) reading Password from NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) reading Password from NVS!", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return false;
     }
@@ -310,11 +328,11 @@ static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ss
     nvs_close(nvs_handle);
 
     if (err == ESP_ERR_NVS_NOT_FOUND || strlen(ssid) == 0) {
-        ESP_LOGI(TAG, "Wi-Fi credentials not found in NVS.");
+        ESP_LOGI_TS(TAG, "Wi-Fi credentials not found in NVS.");
         return false;
     }
 
-    ESP_LOGI(TAG, "Loaded Wi-Fi credentials: SSID=%s", ssid);
+    ESP_LOGI_TS(TAG, "Loaded Wi-Fi credentials: SSID=%s", ssid);
     return true;
 }
 
@@ -322,27 +340,27 @@ static void save_wifi_credentials_to_nvs(const char *ssid, const char *password)
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle for writing!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) opening NVS handle for writing!", esp_err_to_name(err));
         return;
     }
 
     err = nvs_set_str(nvs_handle, NVS_KEY_SSID, ssid);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) writing SSID to NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) writing SSID to NVS!", esp_err_to_name(err));
     } else {
-        ESP_LOGI(TAG, "SSID saved to NVS: %s", ssid);
+        ESP_LOGI_TS(TAG, "SSID saved to NVS: %s", ssid);
     }
 
     err = nvs_set_str(nvs_handle, NVS_KEY_PASSWORD, password);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) writing Password to NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) writing Password to NVS!", esp_err_to_name(err));
     } else {
-        ESP_LOGI(TAG, "Password saved to NVS.");
+        ESP_LOGI_TS(TAG, "Password saved to NVS.");
     }
 
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) committing NVS changes!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) committing NVS changes!", esp_err_to_name(err));
     }
 
     nvs_close(nvs_handle);
@@ -352,16 +370,16 @@ static bool load_auto_redial_settings_from_nvs(void) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle for auto redial!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) opening NVS handle for auto redial!", esp_err_to_name(err));
         return false;
     }
 
     err = nvs_get_u32(nvs_handle, NVS_KEY_REDIAL_PERIOD, &redial_period_seconds);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI(TAG, "Redial period not found in NVS, using default.");
+        ESP_LOGI_TS(TAG, "Redial period not found in NVS, using default.");
         redial_period_seconds = 60; // Default
     } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) reading redial period from NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) reading redial period from NVS!", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return false;
     }
@@ -369,10 +387,10 @@ static bool load_auto_redial_settings_from_nvs(void) {
     uint8_t enabled_u8 = 0;
     err = nvs_get_u8(nvs_handle, NVS_KEY_AUTO_REDIAL_ENABLED, &enabled_u8);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGI(TAG, "Auto redial enabled flag not found in NVS, using default (false).");
+        ESP_LOGI_TS(TAG, "Auto redial enabled flag not found in NVS, using default (false).");
         auto_redial_enabled = false; // Default
     } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) reading auto redial enabled flag from NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) reading auto redial enabled flag from NVS!", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return false;
     } else {
@@ -384,13 +402,13 @@ static bool load_auto_redial_settings_from_nvs(void) {
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         redial_random_delay_seconds = 0;
     } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) reading redial random delay from NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) reading redial random delay from NVS!", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return false;
     }
 
     nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
+    ESP_LOGI_TS(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
              auto_redial_enabled ? "true" : "false", redial_period_seconds, redial_random_delay_seconds);
     return true;
 }
@@ -399,33 +417,33 @@ static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) opening NVS handle for auto redial writing!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) opening NVS handle for auto redial writing!", esp_err_to_name(err));
         return;
     }
 
     err = nvs_set_u8(nvs_handle, NVS_KEY_AUTO_REDIAL_ENABLED, enabled ? 1 : 0);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) writing auto redial enabled to NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) writing auto redial enabled to NVS!", esp_err_to_name(err));
     }
 
     err = nvs_set_u32(nvs_handle, NVS_KEY_REDIAL_PERIOD, period);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) writing redial period to NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) writing redial period to NVS!", esp_err_to_name(err));
     }
 
     // New: Save random delay
     err = nvs_set_u32(nvs_handle, NVS_KEY_AUTO_REDIAL_RANDOM, random_delay);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) writing redial random delay to NVS!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) writing redial random delay to NVS!", esp_err_to_name(err));
     }
 
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error (%s) committing NVS auto redial changes!", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Error (%s) committing NVS auto redial changes!", esp_err_to_name(err));
     }
 
     nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
+    ESP_LOGI_TS(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
              enabled ? "true" : "false", period, random_delay);
 }
 
@@ -435,7 +453,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 {
     if (event_base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_AP_START) {
-            ESP_LOGI(TAG, "Wi-Fi AP started. Connect to SSID: %s", AP_SSID);
+            ESP_LOGI_TS(TAG, "Wi-Fi AP started. Connect to SSID: %s", AP_SSID);
             current_wifi_mode = WIFI_MODE_AP;
             strcpy(current_ip_address, "192.168.4.1"); // Default AP IP
             signal_ip_change(); // Signal morse code task about IP change
@@ -444,12 +462,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             }
             update_auto_redial_timer(); // Update timer state
         } else if (event_id == WIFI_EVENT_STA_START) {
-            ESP_LOGI(TAG, "Wi-Fi STA started. Connecting...");
+            ESP_LOGI_TS(TAG, "Wi-Fi STA started. Connecting...");
             current_wifi_mode = WIFI_MODE_STA;
             esp_wifi_connect();
             update_auto_redial_timer(); // Update timer state
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-            ESP_LOGW(TAG, "Wi-Fi STA disconnected. Retrying connection...");
+            ESP_LOGW_TS(TAG, "Wi-Fi STA disconnected. Retrying connection...");
             esp_wifi_connect(); // Attempt to reconnect
             memset(current_ip_address, 0, sizeof(current_ip_address)); // Clear IP on disconnect
             signal_ip_change(); // Signal morse code task about IP change
@@ -457,7 +475,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI_TS(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
         ip4addr_ntoa_r((const ip4_addr_t*)&event->ip_info.ip, current_ip_address, sizeof(current_ip_address));
         signal_ip_change(); // Signal morse code task about IP change
         current_wifi_mode = WIFI_MODE_STA;
@@ -465,6 +483,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             server = start_webserver(); // Start web server once IP is obtained
         }
         update_auto_redial_timer(); // Update timer state
+        
+        // Initialize NTP time synchronization now that we have internet connectivity
+        init_ntp();
     }
 }
 
@@ -494,7 +515,7 @@ static void start_wifi_ap(void) {
 static void start_wifi_sta(const char *ssid, const char *password) {
     if (current_wifi_mode == WIFI_MODE_AP) {
         // If currently in AP mode, stop it first
-        ESP_LOGI(TAG, "Stopping AP mode before switching to STA.");
+        ESP_LOGI_TS(TAG, "Stopping AP mode before switching to STA.");
         ESP_ERROR_CHECK(esp_wifi_stop());
         
         // Properly destroy AP interface if it exists
@@ -509,7 +530,7 @@ static void start_wifi_sta(const char *ssid, const char *password) {
 
     // Create STA interface only if it doesn't already exist
     if (sta_netif == NULL) {
-        ESP_LOGI(TAG, "Creating STA interface");
+        ESP_LOGI_TS(TAG, "Creating STA interface");
         sta_netif = esp_netif_create_default_wifi_sta(); // Create STA interface
     }
 
@@ -524,13 +545,13 @@ static void start_wifi_sta(const char *ssid, const char *password) {
     wifi_config.sta.ssid[sizeof(wifi_config.sta.ssid) - 1] = '\0';
     wifi_config.sta.password[sizeof(wifi_config.sta.password) - 1] = '\0';
 
-    ESP_LOGI(TAG, "Setting WiFi mode to STA");
+    ESP_LOGI_TS(TAG, "Setting WiFi mode to STA");
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     
-    ESP_LOGI(TAG, "Setting STA configuration for SSID: %s", ssid);
+    ESP_LOGI_TS(TAG, "Setting STA configuration for SSID: %s", ssid);
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     
-    ESP_LOGI(TAG, "Starting WiFi in STA mode");
+    ESP_LOGI_TS(TAG, "Starting WiFi in STA mode");
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
@@ -549,7 +570,7 @@ static esp_err_t redial_get_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "HTTP: Received /redial command.");
+    ESP_LOGI_TS(TAG, "HTTP: Received /redial command.");
     esp_hf_client_dial(NULL); // Send the redial command - NULL
 
     httpd_resp_send_json(req, "{\"message\":\"Redial command sent\"}");
@@ -575,13 +596,13 @@ static esp_err_t dial_get_handler(httpd_req_t *req)
     if (buf_len > 1) {
         buf = (char*)malloc(buf_len);
         if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
-            ESP_LOGI(TAG, "Query: %s", buf);
+            ESP_LOGI_TS(TAG, "Query: %s", buf);
             char param[64]; // Increased buffer for number parameter to allow longer strings
             memset(param, 0, sizeof(param)); // Clear buffer
 
             if (httpd_query_key_value(buf, "number", param, sizeof(param)) == ESP_OK) {
                 url_decode(param);
-                ESP_LOGI(TAG, "HTTP: Received /dial command for number: %s", param);
+                ESP_LOGI_TS(TAG, "HTTP: Received /dial command for number: %s", param);
                 esp_hf_client_dial(param); // Send the dial command with the number
                 free(buf);
                 httpd_resp_send_json(req, "{\"message\":\"Dial command sent\"}");
@@ -654,7 +675,7 @@ static esp_err_t configure_wifi_post_handler(httpd_req_t *req)
         cJSON_Delete(root);
         httpd_resp_send_json(req, "{\"message\":\"Wi-Fi credentials received and device is attempting to connect to home network.\"}\n");
 
-        ESP_LOGI(TAG, "Switching to STA mode with SSID: %s", ssid_json->valuestring);
+        ESP_LOGI_TS(TAG, "Switching to STA mode with SSID: %s", ssid_json->valuestring);
         // Small delay to ensure HTTP response is sent before stopping server
         vTaskDelay(pdMS_TO_TICKS(100));
         
@@ -734,7 +755,7 @@ static esp_err_t serve_static_file(httpd_req_t *req)
 
     struct stat file_stat;
     if (stat(filepath, &file_stat) == -1) {
-        ESP_LOGE(TAG, "File not found: %s", filepath);
+        ESP_LOGE_TS(TAG, "File not found: %s", filepath);
         /* Respond with 404 Error */
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
         return ESP_FAIL;
@@ -742,7 +763,7 @@ static esp_err_t serve_static_file(httpd_req_t *req)
 
     FILE *fd = fopen(filepath, "r");
     if (!fd) {
-        ESP_LOGE(TAG, "Failed to read file : %s", filepath);
+        ESP_LOGE_TS(TAG, "Failed to read file : %s", filepath);
         /* Respond with 500 Internal Server Error */
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read file");
         return ESP_FAIL;
@@ -765,7 +786,7 @@ static esp_err_t serve_static_file(httpd_req_t *req)
 
     char *chunk = (char *)malloc(CHUNK_SIZE);
     if (!chunk) {
-        ESP_LOGE(TAG, "Failed to allocate memory for chunk");
+        ESP_LOGE_TS(TAG, "Failed to allocate memory for chunk");
         fclose(fd);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to allocate memory");
         return ESP_FAIL;
@@ -779,7 +800,7 @@ static esp_err_t serve_static_file(httpd_req_t *req)
 
     free(chunk);
     fclose(fd);
-    ESP_LOGI(TAG, "File served: %s", filepath);
+    ESP_LOGI_TS(TAG, "File served: %s", filepath);
     httpd_resp_send_chunk(req, NULL, 0); // End response
     return ESP_OK;
 }
@@ -841,9 +862,9 @@ static httpd_handle_t start_webserver(void)
     config.send_wait_timeout = 10; // Increase timeout for sending data
 
 
-    ESP_LOGI(TAG, "Starting web server on port: '%d'", config.server_port);
+    ESP_LOGI_TS(TAG, "Starting web server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
-        ESP_LOGI(TAG, "Registering URI handlers");
+        ESP_LOGI_TS(TAG, "Registering URI handlers");
         // Register API handlers first so they take precedence
         httpd_register_uri_handler(server, &redial_uri);
         httpd_register_uri_handler(server, &dial_uri);
@@ -855,14 +876,14 @@ static httpd_handle_t start_webserver(void)
         return server;
     }
 
-    ESP_LOGE(TAG, "Error starting web server!");
+    ESP_LOGE_TS(TAG, "Error starting web server!");
     return NULL;
 }
 
 static void stop_webserver(httpd_handle_t server)
 {
     if (server) {
-        ESP_LOGI(TAG, "Stopping web server");
+        ESP_LOGI_TS(TAG, "Stopping web server");
         httpd_stop(server);
     }
 }
@@ -876,13 +897,13 @@ void auto_redial_timer_callback(void* arg)
             extra = rand() % (redial_random_delay_seconds + 1); // 0..random_delay
         }
         last_random_delay_used = extra;
-        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command... (random extra delay: %lu)", extra);
+        ESP_LOGI_TS(TAG, "Auto Redial Timer: Sending redial command... (random extra delay: %lu)", extra);
         esp_hf_client_dial(NULL); // Use NULL for last number redial
         if (extra > 0) {
             vTaskDelay(pdMS_TO_TICKS(extra * 1000)); // Wait extra seconds before next period
         }
     } else {
-        ESP_LOGD(TAG, "Auto Redial Timer: Conditions not met for redial (BT Connected: %d, Auto Enabled: %d, WiFi Mode: %d)",
+        ESP_LOGD_TS(TAG, "Auto Redial Timer: Conditions not met for redial (BT Connected: %d, Auto Enabled: %d, WiFi Mode: %d)",
                  is_bluetooth_connected, auto_redial_enabled, current_wifi_mode);
     }
 }
@@ -892,7 +913,7 @@ static void update_auto_redial_timer(void) {
     if (auto_redial_enabled && is_bluetooth_connected && current_wifi_mode == WIFI_MODE_STA) {
         if (esp_timer_is_active(auto_redial_timer)) {
             ESP_ERROR_CHECK(esp_timer_stop(auto_redial_timer));
-            ESP_LOGI(TAG, "Stopped existing auto redial timer.");
+            ESP_LOGI_TS(TAG, "Stopped existing auto redial timer.");
         }
         // Seed random if not already seeded
         static bool seeded = false;
@@ -901,13 +922,13 @@ static void update_auto_redial_timer(void) {
             seeded = true;
         }
         ESP_ERROR_CHECK(esp_timer_start_periodic(auto_redial_timer, redial_period_seconds * 1000 * 1000)); // Period in microseconds
-        ESP_LOGI(TAG, "Started auto redial timer with period %lu seconds.", redial_period_seconds);
+        ESP_LOGI_TS(TAG, "Started auto redial timer with period %lu seconds.", redial_period_seconds);
     } else {
         if (esp_timer_is_active(auto_redial_timer)) {
             ESP_ERROR_CHECK(esp_timer_stop(auto_redial_timer));
-            ESP_LOGI(TAG, "Stopped auto redial timer.");
+            ESP_LOGI_TS(TAG, "Stopped auto redial timer.");
         } else {
-            ESP_LOGI(TAG, "Auto redial timer not active or conditions not met.");
+            ESP_LOGI_TS(TAG, "Auto redial timer not active or conditions not met.");
         }
     }
 }
@@ -917,7 +938,7 @@ static void init_led_gpio(void)
 {
     gpio_set_direction(BUILTIN_LED_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(BUILTIN_LED_PIN, 0); // LED off initially
-    ESP_LOGI(TAG, "LED GPIO%d initialized for morse code", BUILTIN_LED_PIN);
+    ESP_LOGI_TS(TAG, "LED GPIO%d initialized for morse code", BUILTIN_LED_PIN);
 }
 
 static void morse_dot(void)
@@ -982,11 +1003,11 @@ static void morse_digit(char digit)
 static void morse_ip_address(const char* ip_addr)
 {
     if (ip_addr == NULL || strlen(ip_addr) == 0) {
-        ESP_LOGW(TAG, "No IP address to signal in morse code");
+        ESP_LOGW_TS(TAG, "No IP address to signal in morse code");
         return;
     }
     
-    ESP_LOGI(TAG, "Signaling IP address in morse code: %s", ip_addr);
+    ESP_LOGI_TS(TAG, "Signaling IP address in morse code: %s", ip_addr);
     
     for (int i = 0; ip_addr[i] != '\0'; i++) {
         morse_digit(ip_addr[i]);
@@ -995,14 +1016,14 @@ static void morse_ip_address(const char* ip_addr)
 
 static void morse_code_led_task(void *pvParameters)
 {
-    ESP_LOGI(TAG, "Morse code LED task started on core %d", xPortGetCoreID());
+    ESP_LOGI_TS(TAG, "Morse code LED task started on core %d", xPortGetCoreID());
     
     while (1) {
         // Wait for IP address to be available
         if (strlen(current_ip_address) > 0) {
             morse_ip_address(current_ip_address);
         } else {
-            ESP_LOGD(TAG, "No IP address available for morse code");
+            ESP_LOGD_TS(TAG, "No IP address available for morse code");
         }
         
         // 5 second pause between readouts
@@ -1012,13 +1033,13 @@ static void morse_code_led_task(void *pvParameters)
 
 static void signal_ip_change(void)
 {
-    ESP_LOGI(TAG, "IP address change signaled for morse code update");
+    ESP_LOGI_TS(TAG, "IP address change signaled for morse code update");
 }
 
 // --- SPIFFS Initialization ---
 static esp_err_t init_spiffs(void)
 {
-    ESP_LOGI(TAG, "Initializing SPIFFS");
+    ESP_LOGI_TS(TAG, "Initializing SPIFFS");
 
     esp_vfs_spiffs_conf_t conf = {
       .base_path = WEB_MOUNT_POINT,
@@ -1031,11 +1052,11 @@ static esp_err_t init_spiffs(void)
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+            ESP_LOGE_TS(TAG, "Failed to mount or format filesystem");
         } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+            ESP_LOGE_TS(TAG, "Failed to find SPIFFS partition");
         } else {
-            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+            ESP_LOGE_TS(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
         }
         return ret;
     }
@@ -1043,9 +1064,9 @@ static esp_err_t init_spiffs(void)
     size_t total = 0, used = 0;
     ret = esp_spiffs_info(conf.partition_label, &total, &used);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+        ESP_LOGI_TS(TAG, "Partition size: total: %d, used: %d", total, used);
     }
     return ret;
 }
@@ -1053,13 +1074,13 @@ static esp_err_t init_spiffs(void)
 // --- Selective Factory Reset Function ---
 static void selective_factory_reset(void)
 {
-    ESP_LOGW(TAG, "Performing selective factory reset - erasing WiFi and Bluetooth pairing data only");
+    ESP_LOGW_TS(TAG, "Performing selective factory reset - erasing WiFi and Bluetooth pairing data only");
     
     // Erase WiFi credentials from our application namespace
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Erasing WiFi credentials from NVS...");
+        ESP_LOGI_TS(TAG, "Erasing WiFi credentials from NVS...");
         
         // Erase WiFi SSID and password
         nvs_erase_key(nvs_handle, NVS_KEY_SSID);
@@ -1068,42 +1089,87 @@ static void selective_factory_reset(void)
         // Commit changes
         err = nvs_commit(nvs_handle);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "WiFi credentials erased successfully");
+            ESP_LOGI_TS(TAG, "WiFi credentials erased successfully");
         } else {
-            ESP_LOGE(TAG, "Failed to commit WiFi credential erasure: %s", esp_err_to_name(err));
+            ESP_LOGE_TS(TAG, "Failed to commit WiFi credential erasure: %s", esp_err_to_name(err));
         }
         
         nvs_close(nvs_handle);
     } else {
-        ESP_LOGE(TAG, "Failed to open NVS namespace for WiFi credential erasure: %s", esp_err_to_name(err));
+        ESP_LOGE_TS(TAG, "Failed to open NVS namespace for WiFi credential erasure: %s", esp_err_to_name(err));
     }
     
     // Erase Bluetooth pairing data from bt_config namespace
     // This is where ESP32 Bluetooth stack stores pairing information
     err = nvs_open("bt_config", NVS_READWRITE, &nvs_handle);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Erasing Bluetooth pairing data from NVS...");
+        ESP_LOGI_TS(TAG, "Erasing Bluetooth pairing data from NVS...");
         
         // Erase the entire bt_config namespace to clear all Bluetooth pairing data
         err = nvs_erase_all(nvs_handle);
         if (err == ESP_OK) {
             err = nvs_commit(nvs_handle);
             if (err == ESP_OK) {
-                ESP_LOGI(TAG, "Bluetooth pairing data erased successfully");
+                ESP_LOGI_TS(TAG, "Bluetooth pairing data erased successfully");
             } else {
-                ESP_LOGE(TAG, "Failed to commit Bluetooth pairing data erasure: %s", esp_err_to_name(err));
+                ESP_LOGE_TS(TAG, "Failed to commit Bluetooth pairing data erasure: %s", esp_err_to_name(err));
             }
         } else {
-            ESP_LOGE(TAG, "Failed to erase Bluetooth pairing data: %s", esp_err_to_name(err));
+            ESP_LOGE_TS(TAG, "Failed to erase Bluetooth pairing data: %s", esp_err_to_name(err));
         }
         
         nvs_close(nvs_handle);
     } else {
         // bt_config namespace might not exist if no devices have been paired
-        ESP_LOGI(TAG, "bt_config namespace not found or inaccessible - no Bluetooth pairing data to erase");
+        ESP_LOGI_TS(TAG, "bt_config namespace not found or inaccessible - no Bluetooth pairing data to erase");
     }
     
-    ESP_LOGI(TAG, "Selective factory reset completed - WiFi and Bluetooth pairing data cleared");
+    ESP_LOGI_TS(TAG, "Selective factory reset completed - WiFi and Bluetooth pairing data cleared");
+}
+
+// --- NTP Time Synchronization Functions ---
+static void ntp_sync_callback(struct timeval *tv)
+{
+    ESP_LOGI_TS(TAG, "NTP time synchronized: %ld seconds since epoch", tv->tv_sec);
+    
+    // Get current time to log for verification
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+    ESP_LOGI_TS(TAG, "Current local time: %s", strftime_buf);
+}
+
+static void init_ntp(void)
+{
+    ESP_LOGI_TS(TAG, "Initializing NTP time synchronization");
+    
+    // Set timezone to UTC (can be configured as needed)
+    setenv("TZ", "UTC", 1);
+    tzset();
+    
+    // Initialize SNTP
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    
+    // Try to get NTP server from DHCP first
+    // Note: esp_netif_get_ntp_server() may not be available in all ESP-IDF versions
+    // so we'll use the fallback servers for now
+    
+    // Set primary NTP server (fallback to public NTP pools)
+    esp_sntp_setservername(0, "0.pool.ntp.org");
+    esp_sntp_setservername(1, "1.pool.ntp.org");
+    esp_sntp_setservername(2, "time.nist.gov");
+    
+    // Set callback for time synchronization
+    esp_sntp_set_time_sync_notification_cb(ntp_sync_callback);
+    
+    // Start SNTP service
+    esp_sntp_init();
+    
+    ESP_LOGI_TS(TAG, "NTP client initialized with servers: 0.pool.ntp.org, 1.pool.ntp.org, time.nist.gov");
 }
 
 // --- Main Application Entry Point ---
@@ -1117,13 +1183,13 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(50)); // Allow pin to settle
 
     if (gpio_get_level(FACTORY_RESET_PIN) == 0) { // Pin pulled low
-        ESP_LOGW(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Performing selective factory reset...", FACTORY_RESET_PIN);
+        ESP_LOGW_TS(TAG, "FACTORY RESET PIN (GPIO%d) DETECTED LOW! Performing selective factory reset...", FACTORY_RESET_PIN);
         
         // Perform selective factory reset - only erase WiFi and Bluetooth pairing data
         // Do NOT erase SPIFFS (preserves React web app) or other NVS settings
         selective_factory_reset();
     } else {
-        ESP_LOGI(TAG, "FACTORY RESET PIN (GPIO%d) is HIGH. Proceeding with normal boot.", FACTORY_RESET_PIN);
+        ESP_LOGI_TS(TAG, "FACTORY RESET PIN (GPIO%d) is HIGH. Proceeding with normal boot.", FACTORY_RESET_PIN);
     }
 
     // Initialize NVS
@@ -1163,10 +1229,10 @@ void app_main(void)
     char stored_ssid[32];
     char stored_password[64];
     if (load_wifi_credentials_from_nvs(stored_ssid, stored_password, sizeof(stored_ssid), sizeof(stored_password))) {
-        ESP_LOGI(TAG, "Found stored Wi-Fi credentials. Starting in STA mode.");
+        ESP_LOGI_TS(TAG, "Found stored Wi-Fi credentials. Starting in STA mode.");
         start_wifi_sta(stored_ssid, stored_password);
     } else {
-        ESP_LOGI(TAG, "No stored Wi-Fi credentials. Starting in AP mode for configuration.");
+        ESP_LOGI_TS(TAG, "No stored Wi-Fi credentials. Starting in AP mode for configuration.");
         start_wifi_ap();
     }
 
@@ -1175,22 +1241,22 @@ void app_main(void)
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
     if (ret) {
-        ESP_LOGE(TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
     ret = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT); // Enable Classic Bluetooth
     if (ret) {
-        ESP_LOGE(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
     ret = esp_bluedroid_init();
     if (ret) {
-        ESP_LOGE(TAG, "%s initialize bluedroid failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s initialize bluedroid failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
     ret = esp_bluedroid_enable();
     if (ret) {
-        ESP_LOGE(TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
@@ -1222,9 +1288,9 @@ void app_main(void)
     
     esp_err_t ret_cod = esp_bt_gap_set_cod(cod, ESP_BT_INIT_COD);
     if (ret_cod == ESP_OK) {
-        ESP_LOGI(TAG, "Successfully set Class of Device for Audio Headset");
+        ESP_LOGI_TS(TAG, "Successfully set Class of Device for Audio Headset");
     } else {
-        ESP_LOGW(TAG, "Failed to set Class of Device: %s", esp_err_to_name(ret_cod));
+        ESP_LOGW_TS(TAG, "Failed to set Class of Device: %s", esp_err_to_name(ret_cod));
     }
 
     // Set discoverable and connectable
@@ -1237,12 +1303,12 @@ void app_main(void)
     // Initialize HFP client
     ret = esp_hf_client_init();
     if (ret) {
-        ESP_LOGE(TAG, "%s initialize HFP client failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s initialize HFP client failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
     ret = esp_hf_client_register_callback(esp_hf_client_cb);
     if (ret) {
-        ESP_LOGE(TAG, "%s register HFP client callback failed: %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE_TS(TAG, "%s register HFP client callback failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
@@ -1273,5 +1339,5 @@ void app_main(void)
         1   // CPU core 1
     );
 
-    ESP_LOGI(TAG, "ESP32 HFP Headset Emulator with API initialized.");
+    ESP_LOGI_TS(TAG, "ESP32 HFP Headset Emulator with API initialized.");
 }
