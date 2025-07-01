@@ -417,3 +417,88 @@ describe('Random Delay Spinner and Readout', () => {
     });
   });
 });
+
+describe('Redial Count Limiting', () => {
+  beforeEach(() => {
+    fetch.mockClear();
+    delete window.location;
+    window.location = { hostname: 'localhost' };
+  });
+
+  test('renders max count spinner and current count display', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_max_count: 5,
+        redial_current_count: 2,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Maximum Redial Count/i)).toBeInTheDocument();
+      expect(screen.getByText(/Current count:/i)).toBeInTheDocument();
+      // Check for the count display components separately
+      expect(screen.getByText('2')).toBeInTheDocument();
+      expect(screen.getByText('5')).toBeInTheDocument();
+    });
+  });
+
+  test('changing max count sends correct API call', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_max_count: 0,
+        redial_current_count: 0,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Maximum Redial Count/i)).toBeInTheDocument();
+    });
+    const spinner = screen.getByLabelText(/Maximum Redial Count/i);
+    await userEvent.type(spinner, '10');
+    
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/set_auto_redial'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"max_count":10')
+        })
+      );
+    });
+  });
+
+  test('shows infinite when max count is 0', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_max_count: 0,
+        redial_current_count: 5,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText(/Current count:/i)).toBeInTheDocument();
+      expect(screen.getByText('5')).toBeInTheDocument(); // Just "5"
+    });
+  });
+});
