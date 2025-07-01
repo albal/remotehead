@@ -328,6 +328,7 @@ describe('App Component', () => {
     expect(screen.queryByLabelText(/Home Wi-Fi SSID/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Home Wi-Fi Password/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Configure ESP32 Wi-Fi')).not.toBeInTheDocument();
+  });
 });
 
 // --- Tests for Random Delay Spinner and Readout ---
