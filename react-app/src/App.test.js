@@ -7,8 +7,15 @@ import App from './App';
 global.fetch = jest.fn();
 
 describe('App Component', () => {
+  // Store original window.location
+  const originalLocation = window.location;
+
   beforeEach(() => {
     fetch.mockClear();
+    
+    // Reset window.location to localhost for most tests
+    delete window.location;
+    window.location = { hostname: 'localhost' };
     
     // Default mock response
     fetch.mockResolvedValue({
@@ -22,6 +29,11 @@ describe('App Component', () => {
         message: 'ESP32 Bluetooth disconnected.'
       })
     });
+  });
+
+  afterEach(() => {
+    // Restore original window.location
+    window.location = originalLocation;
   });
 
   test('renders main UI elements', async () => {
@@ -237,6 +249,39 @@ describe('App Component', () => {
     });
   });
 
+  test('automatically detects IP from browser URL when not on localhost', async () => {
+    // Mock window.location for a real ESP32 IP
+    delete window.location;
+    window.location = { hostname: '192.168.1.100' };
+
+    render(<App />);
+    
+    await waitFor(() => {
+      // Check that the IP input field shows the detected IP from the URL
+      expect(screen.getByDisplayValue('192.168.1.100')).toBeInTheDocument();
+    });
+
+    // Verify that the status API call was made to the detected IP
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.1.100/status', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    });
+  });
+
+  test('uses default IP when on localhost', async () => {
+    // localhost is already set in beforeEach
+    render(<App />);
+    
+    await waitFor(() => {
+      // Check that the IP input field shows the default IP
+      expect(screen.getByDisplayValue('192.168.4.1')).toBeInTheDocument();
+    });
+  });
+
   test('renders automatic redial settings', async () => {
     render(<App />);
     
@@ -283,5 +328,91 @@ describe('App Component', () => {
     expect(screen.queryByLabelText(/Home Wi-Fi SSID/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Home Wi-Fi Password/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Configure ESP32 Wi-Fi')).not.toBeInTheDocument();
+});
+
+// --- Tests for Random Delay Spinner and Readout ---
+describe('Random Delay Spinner and Readout', () => {
+  beforeEach(() => {
+    fetch.mockClear();
+  });
+
+  test('renders random delay spinner and last random value', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 15,
+        last_random_delay: 7,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Random Extra Delay/i)).toHaveValue(15);
+    });
+    expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
+    expect(
+      screen.getAllByText((content, node) =>
+        node.tagName === 'P' && node.textContent.trim().endsWith('7 seconds')
+      ).length
+    ).toBeGreaterThan(0);
+  });
+
+  test('changing random delay spinner sends correct API call', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 10,
+        last_random_delay: 3,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Random Extra Delay/i)).toBeInTheDocument();
+    });
+    const spinner = screen.getByLabelText(/Random Extra Delay/i);
+    await userEvent.clear(spinner);
+    await userEvent.type(spinner, '20');
+    // Wait for debounce and API call
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/set_auto_redial'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"random_delay":20')
+        })
+      );
+    });
+  });
+
+  test('shows 0 if no last random value is reported', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: true,
+        redial_period: 60,
+        redial_random_delay: 0,
+        last_random_delay: 0,
+        message: 'ESP32 connected.'
+      })
+    });
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText(/Last random value used:/i)).toBeInTheDocument();
+      expect(screen.getByText(/0 seconds/)).toBeInTheDocument();
+    });
   });
 });
