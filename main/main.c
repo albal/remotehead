@@ -76,6 +76,8 @@ bool last_call_failed = false; // New: track last call failure
 uint32_t redial_period_seconds = 60; // Default to 60 seconds
 uint32_t redial_random_delay_seconds = 0; // New: random delay in seconds
 uint32_t last_random_delay_used = 0; // New: last random value used
+uint32_t redial_max_count = 0; // New: maximum number of redials (0 = infinite)
+uint32_t redial_current_count = 0; // New: current number of redials made
 
 // --- HFP Outgoing Call State Tracking ---
 static volatile bool g_is_outgoing_call_in_progress = false; // Tracks outgoing call process
@@ -94,6 +96,7 @@ TaskHandle_t morse_code_task_handle = NULL;
 #define NVS_KEY_AUTO_REDIAL_ENABLED "auto_en"
 #define NVS_KEY_REDIAL_PERIOD "redial_period"
 #define NVS_KEY_AUTO_REDIAL_RANDOM "redial_rand"
+#define NVS_KEY_REDIAL_MAX_COUNT "redial_max"
 
 // AP Mode Configuration
 #define AP_SSID "REMOTEHEAD"
@@ -136,7 +139,7 @@ static void start_wifi_sta(const char *ssid, const char *password);
 static bool load_wifi_credentials_from_nvs(char *ssid, char *password, size_t ssid_len, size_t password_len);
 static void save_wifi_credentials_to_nvs(const char *ssid, const char *password);
 static bool load_auto_redial_settings_from_nvs(void);
-static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay);
+static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay, uint32_t max_count);
 void auto_redial_timer_callback(void* arg);
 static void update_auto_redial_timer(void);
 static void selective_factory_reset(void);
@@ -204,7 +207,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                         last_call_failed = true;
                         if (auto_redial_enabled) {
                             auto_redial_enabled = false;
-                            save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds);
+                            save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds, redial_max_count);
                         }
                     }
                     break;
@@ -424,13 +427,23 @@ static bool load_auto_redial_settings_from_nvs(void) {
         return false;
     }
 
+    // New: Load max count
+    err = nvs_get_u32(nvs_handle, NVS_KEY_REDIAL_MAX_COUNT, &redial_max_count);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        redial_max_count = 0; // Default: infinite
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) reading redial max count from NVS!", esp_err_to_name(err));
+        nvs_close(nvs_handle);
+        return false;
+    }
+
     nvs_close(nvs_handle);
-    ESP_LOGI_TS(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
-             auto_redial_enabled ? "true" : "false", redial_period_seconds, redial_random_delay_seconds);
+    ESP_LOGI(TAG, "Loaded auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds, MaxCount=%lu",
+             auto_redial_enabled ? "true" : "false", redial_period_seconds, redial_random_delay_seconds, redial_max_count);
     return true;
 }
 
-static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay) {
+static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint32_t random_delay, uint32_t max_count) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
@@ -454,14 +467,20 @@ static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint
         ESP_LOGE_TS(TAG, "Error (%s) writing redial random delay to NVS!", esp_err_to_name(err));
     }
 
+    // New: Save max count
+    err = nvs_set_u32(nvs_handle, NVS_KEY_REDIAL_MAX_COUNT, max_count);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) writing redial max count to NVS!", esp_err_to_name(err));
+    }
+
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGE_TS(TAG, "Error (%s) committing NVS auto redial changes!", esp_err_to_name(err));
     }
 
     nvs_close(nvs_handle);
-    ESP_LOGI_TS(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds",
-             enabled ? "true" : "false", period, random_delay);
+    ESP_LOGI(TAG, "Saved auto redial settings: Enabled=%s, Period=%lu seconds, RandomDelay=%lu seconds, MaxCount=%lu",
+             enabled ? "true" : "false", period, random_delay, max_count);
 }
 
 
@@ -651,6 +670,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "redial_random_delay", redial_random_delay_seconds); // New
     cJSON_AddNumberToObject(root, "last_random_delay", last_random_delay_used); // New
     cJSON_AddBoolToObject(root, "last_call_failed", last_call_failed); // New
+    cJSON_AddNumberToObject(root, "redial_max_count", redial_max_count); // New
+    cJSON_AddNumberToObject(root, "redial_current_count", redial_current_count); // New
 
     cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "ESP32 Bluetooth connected to phone." : "ESP32 Bluetooth disconnected.");
 
@@ -731,6 +752,7 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
     cJSON *enabled_json = cJSON_GetObjectItemCaseSensitive(root, "enabled");
     cJSON *period_json = cJSON_GetObjectItemCaseSensitive(root, "period");
     cJSON *random_json = cJSON_GetObjectItemCaseSensitive(root, "random_delay"); // New
+    cJSON *max_count_json = cJSON_GetObjectItemCaseSensitive(root, "max_count"); // New
 
     if (cJSON_IsBool(enabled_json) && cJSON_IsNumber(period_json)) {
         auto_redial_enabled = cJSON_IsTrue(enabled_json);
@@ -738,13 +760,16 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
         if (cJSON_IsNumber(random_json)) {
             redial_random_delay_seconds = (uint32_t)cJSON_GetNumberValue(random_json);
         }
+        if (cJSON_IsNumber(max_count_json)) {
+            redial_max_count = (uint32_t)cJSON_GetNumberValue(max_count_json);
+        }
 
         // Clamp period to valid range
         if (redial_period_seconds < 10) redial_period_seconds = 10;
         if (redial_period_seconds > 84600) redial_period_seconds = 84600;
         if (redial_random_delay_seconds > 86400) redial_random_delay_seconds = 86400;
 
-        save_auto_redial_settings_to_nvs(auto_redial_enabled, redial_period_seconds, redial_random_delay_seconds);
+        save_auto_redial_settings_to_nvs(auto_redial_enabled, redial_period_seconds, redial_random_delay_seconds, redial_max_count);
         update_auto_redial_timer(); // Update timer based on new settings
 
         cJSON_Delete(root);
@@ -909,12 +934,25 @@ static void stop_webserver(httpd_handle_t server)
 void auto_redial_timer_callback(void* arg)
 {
     if (is_bluetooth_connected && auto_redial_enabled && current_wifi_mode == WIFI_MODE_STA) {
+        // Check if we've reached the maximum count (when max_count > 0)
+        if (redial_max_count > 0 && redial_current_count >= redial_max_count) {
+            ESP_LOGI(TAG, "Auto Redial Timer: Maximum redial count (%lu) reached, stopping auto redial", redial_max_count);
+            auto_redial_enabled = false;
+            update_auto_redial_timer(); // This will stop the timer
+            return;
+        }
+        
         uint32_t extra = 0;
         if (redial_random_delay_seconds > 0) {
             extra = rand() % (redial_random_delay_seconds + 1); // 0..random_delay
         }
         last_random_delay_used = extra;
-        ESP_LOGI_TS(TAG, "Auto Redial Timer: Sending redial command... (random extra delay: %lu)", extra);
+        
+        // Increment the call counter before making the call
+        redial_current_count++;
+        
+        ESP_LOGI(TAG, "Auto Redial Timer: Sending redial command... (count: %lu/%lu, random extra delay: %lu)", 
+                 redial_current_count, redial_max_count > 0 ? redial_max_count : 999999, extra);
         esp_hf_client_dial(NULL); // Use NULL for last number redial
         if (extra > 0) {
             vTaskDelay(pdMS_TO_TICKS(extra * 1000)); // Wait extra seconds before next period
@@ -932,6 +970,11 @@ static void update_auto_redial_timer(void) {
             ESP_ERROR_CHECK(esp_timer_stop(auto_redial_timer));
             ESP_LOGI_TS(TAG, "Stopped existing auto redial timer.");
         }
+        
+        // Reset the redial counter when starting a new redial session
+        redial_current_count = 0;
+        ESP_LOGI(TAG, "Reset redial counter to 0. Max count: %lu (0 = infinite)", redial_max_count);
+        
         // Seed random if not already seeded
         static bool seeded = false;
         if (!seeded) {
