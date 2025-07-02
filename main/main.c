@@ -14,6 +14,7 @@
 #include "esp_hf_client_api.h" // Ensure this is included
 #include "esp_timer.h"
 #include "esp_sntp.h"
+#include "lwip/apps/sntp.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_wifi.h"
@@ -1130,7 +1131,7 @@ static void selective_factory_reset(void)
 // --- NTP Time Synchronization Functions ---
 static void ntp_sync_callback(struct timeval *tv)
 {
-    ESP_LOGI_TS(TAG, "NTP time synchronized: %ld seconds since epoch", tv->tv_sec);
+    ESP_LOGI_TS(TAG, "NTP time synchronized: %lld seconds since epoch", (long long)tv->tv_sec);
     
     // Get current time to log for verification
     time_t now;
@@ -1152,22 +1153,22 @@ static void init_ntp(void)
     tzset();
     
     // Initialize SNTP
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
     
     // Try to get NTP server from DHCP first
     // Note: esp_netif_get_ntp_server() may not be available in all ESP-IDF versions
     // so we'll use the fallback servers for now
     
     // Set primary NTP server (fallback to public NTP pools)
-    esp_sntp_setservername(0, "0.pool.ntp.org");
-    esp_sntp_setservername(1, "1.pool.ntp.org");
-    esp_sntp_setservername(2, "time.nist.gov");
+    sntp_setservername(0, "0.pool.ntp.org");
+    sntp_setservername(1, "1.pool.ntp.org");
+    sntp_setservername(2, "time.nist.gov");
     
     // Set callback for time synchronization
-    esp_sntp_set_time_sync_notification_cb(ntp_sync_callback);
+    sntp_set_time_sync_notification_cb(ntp_sync_callback);
     
     // Start SNTP service
-    esp_sntp_init();
+    sntp_init();
     
     ESP_LOGI_TS(TAG, "NTP client initialized with servers: 0.pool.ntp.org, 1.pool.ntp.org, time.nist.gov");
 }
