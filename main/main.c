@@ -172,7 +172,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                         last_call_failed = true;
                         if (auto_redial_enabled) {
                             auto_redial_enabled = false;
-                            save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds);
+                            save_auto_redial_settings_to_nvs(false, redial_period_seconds, redial_random_delay_seconds, redial_max_count);
                         }
                     }
                     break;
