@@ -31,13 +31,13 @@
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOG##level(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    esp_log_write(level, tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
-#define ESP_LOGI_TS(tag, format, ...) LOG_WITH_TIMESTAMP(I, tag, format, ##__VA_ARGS__)
-#define ESP_LOGW_TS(tag, format, ...) LOG_WITH_TIMESTAMP(W, tag, format, ##__VA_ARGS__)
-#define ESP_LOGE_TS(tag, format, ...) LOG_WITH_TIMESTAMP(E, tag, format, ##__VA_ARGS__)
-#define ESP_LOGD_TS(tag, format, ...) LOG_WITH_TIMESTAMP(D, tag, format, ##__VA_ARGS__)
+#define ESP_LOGI_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_INFO, tag, format, ##__VA_ARGS__)
+#define ESP_LOGW_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_WARN, tag, format, ##__VA_ARGS__)
+#define ESP_LOGE_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_ERROR, tag, format, ##__VA_ARGS__)
+#define ESP_LOGD_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_DEBUG, tag, format, ##__VA_ARGS__)
 
 // Helper function to send JSON response
 static esp_err_t httpd_resp_send_json(httpd_req_t *req, const char *json_str) {
