@@ -3,6 +3,7 @@
 #include <sys/stat.h> // For stat()
 #include <time.h>
 #include <sys/time.h>
+#include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,7 +14,7 @@
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h" // Ensure this is included
 #include "esp_timer.h"
-#include "lwip/apps/sntp.h"
+#include "esp_sntp.h" // Use ESP-IDF v5.x SNTP header
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_wifi.h"
@@ -31,28 +32,28 @@
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGI(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOGI(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGW_TS(tag, format, ...) do { \
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGW(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOGW(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGE_TS(tag, format, ...) do { \
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGE(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOGE(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGD_TS(tag, format, ...) do { \
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGD(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOGD(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 // Helper function to send JSON response
@@ -1162,19 +1163,16 @@ static void ntp_sync_callback(struct timeval *tv)
 static void init_ntp(void)
 {
     ESP_LOGI_TS(TAG, "Initializing NTP time synchronization");
-    
     // Set timezone to UTC (can be configured as needed)
     setenv("TZ", "UTC", 1);
     tzset();
-    
-    // Initialize and start SNTP
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "0.pool.ntp.org");
-    sntp_setservername(1, "1.pool.ntp.org");
-    sntp_setservername(2, "time.nist.gov");
-    sntp_set_time_sync_notification_cb(ntp_sync_callback);
-    sntp_init();
-    
+    // Initialize and start SNTP using new esp_sntp_* API
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "0.pool.ntp.org");
+    esp_sntp_setservername(1, "1.pool.ntp.org");
+    esp_sntp_setservername(2, "time.nist.gov");
+    sntp_set_time_sync_notification_cb(ntp_sync_callback); // This function is still valid in esp_sntp.h
+    esp_sntp_init();
     ESP_LOGI_TS(TAG, "NTP client initialized with servers: 0.pool.ntp.org, 1.pool.ntp.org, time.nist.gov");
 }
 
