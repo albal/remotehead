@@ -31,6 +31,9 @@ const App = () => {
   const [redialRandomDelay, setRedialRandomDelay] = useState(0);
   const [lastRandomDelay, setLastRandomDelay] = useState(0);
   const [lastCallFailed, setLastCallFailed] = useState(false); // New: track last call failure
+  // New state for redial count limiting
+  const [redialMaxCount, setRedialMaxCount] = useState(0); // 0 = infinite
+  const [redialCurrentCount, setRedialCurrentCount] = useState(0);
 
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
@@ -61,6 +64,8 @@ const App = () => {
           setRedialRandomDelay(data.redial_random_delay || 0);
           setLastRandomDelay(data.last_random_delay || 0);
           setLastCallFailed(!!data.last_call_failed); // New
+          setRedialMaxCount(data.redial_max_count || 0); // New
+          setRedialCurrentCount(data.redial_current_count || 0); // New
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -115,6 +120,7 @@ const App = () => {
       enabled: newEnabledState,
       period: redialPeriod,
       random_delay: redialRandomDelay, // New
+      max_count: redialMaxCount, // New
     });
   };
 
@@ -134,6 +140,7 @@ const App = () => {
         enabled: autoRedialEnabled,
         period: value,
         random_delay: redialRandomDelay, // New
+        max_count: redialMaxCount, // New
       });
     }
   };
@@ -149,6 +156,23 @@ const App = () => {
         enabled: autoRedialEnabled,
         period: redialPeriod,
         random_delay: value,
+        max_count: redialMaxCount, // New
+      });
+    }
+  };
+
+  // Handler for changing max count
+  const handleMaxCountChange = (e) => {
+    let value = parseInt(e.target.value, 10);
+    if (isNaN(value)) value = 0;
+    value = Math.max(0, value); // No upper limit
+    setRedialMaxCount(value);
+    if (autoRedialEnabled) {
+      sendCommand('set_auto_redial', 'POST', {
+        enabled: autoRedialEnabled,
+        period: redialPeriod,
+        random_delay: redialRandomDelay,
+        max_count: value,
       });
     }
   };
@@ -311,6 +335,33 @@ const App = () => {
             </p>
             <p className="text-xs text-blue-700 mt-1">
               Last random value used: <span className="font-mono">{lastRandomDelay}</span> seconds
+            </p>
+          </div>
+          <div className="mb-4">
+            <label htmlFor="max-count" className="block text-sm font-medium text-gray-700 mb-1">
+              Maximum Redial Count:
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="number"
+                id="max-count"
+                className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={redialMaxCount}
+                onChange={handleMaxCountChange}
+                min="0"
+                step="1"
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'} // Only enabled if connected and in STA mode
+              />
+              <span className="text-xs text-gray-600">(0 = infinite)</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Set the maximum number of redial attempts. When reached, automatic redial will stop.
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Current count: <span className="font-mono font-bold">{redialCurrentCount}</span>
+              {redialMaxCount > 0 && (
+                <span> / <span className="font-mono">{redialMaxCount}</span></span>
+              )}
             </p>
           </div>
         </div>
