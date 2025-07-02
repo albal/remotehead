@@ -13,7 +13,6 @@
 #include "esp_gap_bt_api.h"
 #include "esp_hf_client_api.h" // Ensure this is included
 #include "esp_timer.h"
-#include "esp_sntp.h"
 #include "lwip/apps/sntp.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -28,17 +27,33 @@
 #define TAG "HFP_REDIAL_API"
 
 // Timestamped logging macros in dmesg style [seconds.microseconds]
-#define LOG_WITH_TIMESTAMP(level, tag, format, ...) do { \
+#define ESP_LOGI_TS(tag, format, ...) do { \
     uint64_t timestamp_us = esp_timer_get_time(); \
     uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
     uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    esp_log_write(level, tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+    ESP_LOGI(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
-#define ESP_LOGI_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_INFO, tag, format, ##__VA_ARGS__)
-#define ESP_LOGW_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_WARN, tag, format, ##__VA_ARGS__)
-#define ESP_LOGE_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_ERROR, tag, format, ##__VA_ARGS__)
-#define ESP_LOGD_TS(tag, format, ...) LOG_WITH_TIMESTAMP(ESP_LOG_DEBUG, tag, format, ##__VA_ARGS__)
+#define ESP_LOGW_TS(tag, format, ...) do { \
+    uint64_t timestamp_us = esp_timer_get_time(); \
+    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
+    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
+    ESP_LOGW(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+} while(0)
+
+#define ESP_LOGE_TS(tag, format, ...) do { \
+    uint64_t timestamp_us = esp_timer_get_time(); \
+    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
+    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
+    ESP_LOGE(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+} while(0)
+
+#define ESP_LOGD_TS(tag, format, ...) do { \
+    uint64_t timestamp_us = esp_timer_get_time(); \
+    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
+    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
+    ESP_LOGD(tag, "[%5u.%06u] " format, seconds, microseconds, ##__VA_ARGS__); \
+} while(0)
 
 // Helper function to send JSON response
 static esp_err_t httpd_resp_send_json(httpd_req_t *req, const char *json_str) {
@@ -1131,7 +1146,7 @@ static void selective_factory_reset(void)
 // --- NTP Time Synchronization Functions ---
 static void ntp_sync_callback(struct timeval *tv)
 {
-    ESP_LOGI_TS(TAG, "NTP time synchronized: %lld seconds since epoch", (long long)tv->tv_sec);
+    ESP_LOGI_TS(TAG, "NTP time synchronized: %ld seconds since epoch", (long)tv->tv_sec);
     
     // Get current time to log for verification
     time_t now;
@@ -1152,22 +1167,12 @@ static void init_ntp(void)
     setenv("TZ", "UTC", 1);
     tzset();
     
-    // Initialize SNTP
+    // Initialize and start SNTP
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    
-    // Try to get NTP server from DHCP first
-    // Note: esp_netif_get_ntp_server() may not be available in all ESP-IDF versions
-    // so we'll use the fallback servers for now
-    
-    // Set primary NTP server (fallback to public NTP pools)
     sntp_setservername(0, "0.pool.ntp.org");
     sntp_setservername(1, "1.pool.ntp.org");
     sntp_setservername(2, "time.nist.gov");
-    
-    // Set callback for time synchronization
     sntp_set_time_sync_notification_cb(ntp_sync_callback);
-    
-    // Start SNTP service
     sntp_init();
     
     ESP_LOGI_TS(TAG, "NTP client initialized with servers: 0.pool.ntp.org, 1.pool.ntp.org, time.nist.gov");
