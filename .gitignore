@@ -39,3 +39,6 @@ react-app/coverage/
 
 # ESP-IDF build artifacts
 build/
+
+# SPIFFS Directory
+spiffs/
