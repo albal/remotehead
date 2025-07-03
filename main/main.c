@@ -27,33 +27,44 @@
 
 #define TAG "HFP_REDIAL_API"
 
-// Timestamped logging macros in dmesg style [seconds.microseconds]
+// Helper function to get timestamp for logging (actual time if available, boot time otherwise)
+static inline void get_log_timestamp(uint32_t *seconds, uint32_t *microseconds) {
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) == 0 && tv.tv_sec > 1000000000) {
+        // We have a valid time (after year 2001), use actual time
+        *seconds = (uint32_t)tv.tv_sec;
+        *microseconds = (uint32_t)tv.tv_usec;
+    } else {
+        // No valid time set yet, fall back to boot time
+        uint64_t timestamp_us = esp_timer_get_time();
+        *seconds = (uint32_t)(timestamp_us / 1000000);
+        *microseconds = (uint32_t)(timestamp_us % 1000000);
+    }
+}
+
+// Timestamped logging macros using actual time when available
 #define ESP_LOGI_TS(tag, format, ...) do { \
-    uint64_t timestamp_us = esp_timer_get_time(); \
-    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
-    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGI(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
+    uint32_t seconds, microseconds; \
+    get_log_timestamp(&seconds, &microseconds); \
+    ESP_LOGI(tag, "[%10"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGW_TS(tag, format, ...) do { \
-    uint64_t timestamp_us = esp_timer_get_time(); \
-    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
-    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGW(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
+    uint32_t seconds, microseconds; \
+    get_log_timestamp(&seconds, &microseconds); \
+    ESP_LOGW(tag, "[%10"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGE_TS(tag, format, ...) do { \
-    uint64_t timestamp_us = esp_timer_get_time(); \
-    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
-    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGE(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
+    uint32_t seconds, microseconds; \
+    get_log_timestamp(&seconds, &microseconds); \
+    ESP_LOGE(tag, "[%10"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 #define ESP_LOGD_TS(tag, format, ...) do { \
-    uint64_t timestamp_us = esp_timer_get_time(); \
-    uint32_t seconds = (uint32_t)(timestamp_us / 1000000); \
-    uint32_t microseconds = (uint32_t)(timestamp_us % 1000000); \
-    ESP_LOGD(tag, "[%5"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
+    uint32_t seconds, microseconds; \
+    get_log_timestamp(&seconds, &microseconds); \
+    ESP_LOGD(tag, "[%10"PRIu32".%06"PRIu32"] " format, seconds, microseconds, ##__VA_ARGS__); \
 } while(0)
 
 // Helper function to send JSON response
@@ -1200,7 +1211,7 @@ static void ntp_sync_callback(struct timeval *tv)
     
     char strftime_buf[64];
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI_TS(TAG, "Current local time: %s", strftime_buf);
+    ESP_LOGI_TS(TAG, "Current local time: %s (timestamps will now use actual time)", strftime_buf);
 }
 
 static void init_ntp(void)
