@@ -684,7 +684,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "redial_max_count", redial_max_count); // New
     cJSON_AddNumberToObject(root, "redial_current_count", redial_current_count); // New
 
-    cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "ESP32 Bluetooth connected to phone." : "ESP32 Bluetooth disconnected.");
+    cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "Bluetooth connected" : "Bluetooth disconnected");
 
     const char *json_response = cJSON_PrintUnformatted(root);
     httpd_resp_sendstr(req, json_response);
