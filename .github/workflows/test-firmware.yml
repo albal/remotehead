@@ -90,6 +90,7 @@ jobs:
       with:
         esp_idf_version: 'release-v5.1'
         command: |
+          idf.py build
           idf.py qemu
           echo "✅ Tests executed in QEMU"
 
