@@ -21,4 +21,6 @@ void app_main(void) {
     RUN_TEST(test_settings_persistence_mock);
     
     UNITY_END();
+
+    exit(0);
 }
