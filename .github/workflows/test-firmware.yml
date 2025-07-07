@@ -23,7 +23,6 @@ jobs:
       with:
         esp_idf_version: 'release-v5.4'
         command: |
-          cd test
           idf.py build
 
     - name: Install QEMU items
