@@ -21,14 +21,15 @@ jobs:
     - name: Build ESP32 firmware
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
-        esp_idf_version: 'release-v5.5'
+        esp_idf_version: 'release-v5.4'
         command: |
+          cd test
           idf.py build
 
     - name: Install QEMU items
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
-        esp_idf_version: release-v5.5
+        esp_idf_version: 'release-v5.4'
         command: |
           . $IDF_PATH/export.sh
           python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
@@ -88,8 +89,9 @@ jobs:
     - name: Run Tests in QEMU
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
-        esp_idf_version: 'release-v5.5'
+        esp_idf_version: 'release-v5.4'
         command: |
+          cd test
           idf.py build
           idf.py qemu
           echo "✅ Tests executed in QEMU"
