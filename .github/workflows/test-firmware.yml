@@ -25,6 +25,14 @@ jobs:
         command: |
           idf.py build
 
+    - name: Install QEMU items
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: release-v5.1
+        command: |
+          . $IDF_PATH/export.sh
+          python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
+
     - name: Validate build artifacts
       run: |
         if [ ! -f build/remotehead.bin ]; then
