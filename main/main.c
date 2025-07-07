@@ -167,7 +167,7 @@ static void init_ntp(void);
 static void ntp_sync_callback(struct timeval *tv);
 
 // --- Helper function to decode URL-encoded strings ---
-static void url_decode(char *str) {
+void url_decode(char *str) {
     char *p_str = str;
     char *p_decoded = str;
     while (*p_str) {

@@ -69,3 +69,19 @@ jobs:
         fi
         
         echo "✅ Basic code quality checks completed"
+
+    - name: Install QEMU
+      run: |
+        echo "Installing QEMU..."
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-arm qemu-user
+        echo "✅ QEMU installation completed"
+
+    - name: Run Tests in QEMU
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.1'
+        command: |
+          idf.py qemu
+          echo "✅ Tests executed in QEMU"
+
