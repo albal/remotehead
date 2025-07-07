@@ -54,4 +54,5 @@ void app_main(void)
         // Otherwise, exit QEMU with a success code
         qemu_exit_success();
     }
+    exit(0);
 }
