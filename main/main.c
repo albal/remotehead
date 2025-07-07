@@ -296,7 +296,7 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
         case ESP_BT_GAP_AUTH_CMPL_EVT: {
             if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
                 ESP_LOGI_TS(TAG, "authentication success: %s", param->auth_cmpl.device_name);
-                esp_log_buffer_hex(TAG, param->auth_cmpl.bda, ESP_BD_ADDR_LEN);
+                ESP_LOG_BUFFER_HEX(TAG, param->auth_cmpl.bda, ESP_BD_ADDR_LEN);
             } else {
                 ESP_LOGE_TS(TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
             }
@@ -1356,7 +1356,7 @@ void app_main(void)
     
     // Set Bluetooth device name
     const char *device_name = "RemoteHead";
-    esp_bt_dev_set_device_name(device_name);
+    esp_bt_gap_set_device_name(device_name);
 
     // Initialize HFP client
     ret = esp_hf_client_init();
