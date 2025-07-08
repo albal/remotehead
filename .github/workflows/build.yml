@@ -46,14 +46,14 @@ jobs:
     - name: Set up ESP-IDF and Build
       uses: espressif/esp-idf-ci-action@v1.2.0 # Use the official ESP-IDF action
       with:
-        esp_idf_version: 'release-v5.1' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
+        esp_idf_version: 'release-v5.4' # Specify your ESP-IDF version (e.g., release-v5.1, v5.0, master)
         command: 'idf.py build' # Build firmware (SPIFFS image created automatically)
 
     # --- Generate Combined Flashable Image ---
     - name: Create combined flashable binary
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
-        esp_idf_version: 'release-v5.1'
+        esp_idf_version: 'release-v5.4'
         command: |
           # Use esptool from ESP-IDF to create combined binary
           # Path to generated binaries (relative to root directory)
