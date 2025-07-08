@@ -102,12 +102,12 @@ jobs:
         fi
         
         # Check test files exist
-        if [ ! -d "components/main_test" ]; then
+        if [ ! -d "test/main" ]; then
           echo "❌ Error: Unit test directory not found"
           exit 1
         fi
         
-        if [ ! -f "components/main_test/test_main.c" ]; then
+        if [ ! -f "test/main/test_main.c" ]; then
           echo "❌ Error: Main test file not found"
           exit 1
         fi
