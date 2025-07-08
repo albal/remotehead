@@ -60,15 +60,12 @@ jobs:
     - name: Run Tests in QEMU
       uses: espressif/esp-idf-ci-action@v1.2.0
       env:
-      # This forces the idf.py script to not buffer its output
-        PYTHONUNBUFFERED: "1"
       with:
         esp_idf_version: 'release-v5.4'
-
         command: |
           cd test
           idf.py build
-          timeout 30s idf.py qemu
+          PYTHONUNBUFFERED=1 timeout 30s idf.py qemu
           echo "✅ Tests executed in QEMU"
 
   code-quality:
