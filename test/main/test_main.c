@@ -40,4 +40,14 @@ void run_all_tests(void)
 void app_main(void)
 {
     run_all_tests();
+
+    // After tests pass, print a success message and halt in a loop.
+    printf("Tests finished, halting CPU.\n");
+    fflush(stdout); // Ensure the message is printed before halting
+
+    // Halt the CPU. The test runner will see the test pass messages
+    // and exit based on its timeout.
+    while (1) {
+        ;
+    }
 }
