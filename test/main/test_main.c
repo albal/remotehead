@@ -47,12 +47,7 @@ void app_main(void)
     // UNITY_END() returns the number of failures.
     int failures = UNITY_END();
 
-    if (failures > 0) {
-        // If any test failed, exit QEMU with a failure code
-        qemu_exit_failure();
-    } else {
-        // Otherwise, exit QEMU with a success code
-        qemu_exit_success();
-    }
-    exit(0);
+    // Pass the failure count to the official exit function.
+    // This will exit QEMU with a status of 0 for success or 1 for failure.
+    test_utils_finish(failures);
 }
