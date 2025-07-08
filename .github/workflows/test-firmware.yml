@@ -23,9 +23,17 @@ jobs:
     - name: Build ESP32 firmware
       uses: espressif/esp-idf-ci-action@v1.2.0
       with:
-        esp_idf_version: 'release-v5.1'
+        esp_idf_version: 'release-v5.4'
         command: |
           idf.py build
+
+    - name: Install QEMU items
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.4'
+        command: |
+          . $IDF_PATH/export.sh
+          python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
 
     - name: Validate build artifacts
       run: |
@@ -120,3 +128,21 @@ jobs:
         fi
         
         echo "✅ Basic code quality checks completed"
+
+    - name: Install QEMU
+      run: |
+        echo "Installing QEMU..."
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-arm qemu-user
+        echo "✅ QEMU installation completed"
+
+    - name: Run Tests in QEMU
+      uses: espressif/esp-idf-ci-action@v1.2.0
+      with:
+        esp_idf_version: 'release-v5.4'
+        command: |
+          cd test
+          idf.py build
+          idf.py qemu
+          echo "✅ Tests executed in QEMU"
+

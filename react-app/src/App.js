@@ -1,9 +1,21 @@
+import './index.css';
+import './fallback-tailwind.css';
 import React, { useState, useEffect, useCallback } from 'react';
 
 // Main App component for the ESP32 Bluetooth Redial Controller
 const App = () => {
+  // Function to get initial IP from current URL
+  const getInitialIp = () => {
+    // If we're not on localhost/development, use the hostname from the current URL
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      return window.location.hostname;
+    }
+    // Default IP for AP mode when in development
+    return '192.168.4.1';
+  };
+
   // State variables for managing the UI and communication
-  const [esp32Ip, setEsp32Ip] = useState('192.168.4.1'); // Default IP for AP mode
+  const [esp32Ip, setEsp32Ip] = useState(getInitialIp());
   const [homeWifiSsid, setHomeWifiSsid] = useState(''); // User's home Wi-Fi SSID
   const [homeWifiPassword, setHomeWifiPassword] = useState(''); // User's home Wi-Fi password
   const [dialNumber, setDialNumber] = useState(''); // Number to dial
@@ -15,6 +27,13 @@ const App = () => {
   // New state variables for automatic redial
   const [autoRedialEnabled, setAutoRedialEnabled] = useState(false);
   const [redialPeriod, setRedialPeriod] = useState(60); // Default to 60 seconds
+  // New state for random delay and last random value
+  const [redialRandomDelay, setRedialRandomDelay] = useState(0);
+  const [lastRandomDelay, setLastRandomDelay] = useState(0);
+  const [lastCallFailed, setLastCallFailed] = useState(false); // New: track last call failure
+  // New state for redial count limiting
+  const [redialMaxCount, setRedialMaxCount] = useState(0); // 0 = infinite
+  const [redialCurrentCount, setRedialCurrentCount] = useState(0);
 
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
@@ -37,20 +56,25 @@ const App = () => {
       if (response.ok) {
         setStatusMessage(`Command "${endpoint}" successful: ${data.message || JSON.stringify(data)}`);
         if (endpoint === 'status') {
-          setIsConnectedToEsp32(true); // Successfully fetched status, so connected to ESP32 HTTP server
+          setIsConnectedToEsp32(true);
           setIsBluetoothConnected(data.bluetooth_connected);
           setEsp32WifiMode(data.wifi_mode);
-          setAutoRedialEnabled(data.auto_redial_enabled); // Update auto redial state
-          setRedialPeriod(data.redial_period); // Update redial period state
+          setAutoRedialEnabled(data.auto_redial_enabled);
+          setRedialPeriod(data.redial_period);
+          setRedialRandomDelay(data.redial_random_delay || 0);
+          setLastRandomDelay(data.last_random_delay || 0);
+          setLastCallFailed(!!data.last_call_failed); // New
+          setRedialMaxCount(data.redial_max_count || 0); // New
+          setRedialCurrentCount(data.redial_current_count || 0); // New
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
           }
         } else if (endpoint === 'configure_wifi') {
-          // After configuring, assume ESP32 will reboot or switch, so clear IP and expect reconnection
-          setStatusMessage('Wi-Fi configured. ESP32 is restarting or switching modes. Please reconnect to your home network and update ESP32 IP if necessary.');
+          // After configuring, assume ESP32 will reboot or switch, so clear connection status and let status polling update IP
+          setStatusMessage('Wi-Fi configured. ESP32 is switching to home network. The IP address will be automatically updated when the device reconnects.');
           setIsConnectedToEsp32(false);
-          setEsp32Ip('192.168.1.100'); // Reset to a common STA IP for next connection attempt
+          // Don't set a hardcoded IP - let the status polling update it automatically
         }
       } else {
         setStatusMessage(`Error sending "${endpoint}" command: ${data.error || response.statusText}`);
@@ -95,6 +119,8 @@ const App = () => {
     sendCommand('set_auto_redial', 'POST', {
       enabled: newEnabledState,
       period: redialPeriod,
+      random_delay: redialRandomDelay, // New
+      max_count: redialMaxCount, // New
     });
   };
 
@@ -113,6 +139,40 @@ const App = () => {
       sendCommand('set_auto_redial', 'POST', {
         enabled: autoRedialEnabled,
         period: value,
+        random_delay: redialRandomDelay, // New
+        max_count: redialMaxCount, // New
+      });
+    }
+  };
+
+  // Handler for changing random delay
+  const handleRandomDelayChange = (e) => {
+    let value = parseInt(e.target.value, 10);
+    if (isNaN(value)) value = 0;
+    value = Math.max(0, Math.min(value, 86400));
+    setRedialRandomDelay(value);
+    if (autoRedialEnabled) {
+      sendCommand('set_auto_redial', 'POST', {
+        enabled: autoRedialEnabled,
+        period: redialPeriod,
+        random_delay: value,
+        max_count: redialMaxCount, // New
+      });
+    }
+  };
+
+  // Handler for changing max count
+  const handleMaxCountChange = (e) => {
+    let value = parseInt(e.target.value, 10);
+    if (isNaN(value)) value = 0;
+    value = Math.max(0, value); // No upper limit
+    setRedialMaxCount(value);
+    if (autoRedialEnabled) {
+      sendCommand('set_auto_redial', 'POST', {
+        enabled: autoRedialEnabled,
+        period: redialPeriod,
+        random_delay: redialRandomDelay,
+        max_count: value,
       });
     }
   };
@@ -164,55 +224,62 @@ const App = () => {
           </p>
         </div>
 
-        {/* Wi-Fi Configuration Section */}
-        <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
-          <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
-            Configure Home Wi-Fi
-          </h2>
-          <p className="text-sm text-gray-600 mb-4">
-            First, connect your device to the ESP32's Wi-Fi network: <strong className="text-blue-700">"REMOTEHEAD"</strong> (no password).
-            Then, enter your home Wi-Fi details below.
-          </p>
-          <div className="mb-3">
-            <label htmlFor="home-ssid" className="block text-sm font-medium text-gray-700 mb-1">
-              Home Wi-Fi SSID:
-            </label>
-            <input
-              type="text"
-              id="home-ssid"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-              value={homeWifiSsid}
-              onChange={(e) => setHomeWifiSsid(e.target.value)}
-              placeholder="Your Home Wi-Fi Name"
-            />
+        {/* Wi-Fi Configuration Section - Only show when in AP mode */}
+        {esp32WifiMode === 'AP' && (
+          <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
+            <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
+              Configure Home Wi-Fi
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              First, connect your device to the ESP32's Wi-Fi network: <strong className="text-blue-700">"REMOTEHEAD"</strong> (no password).
+              Then, enter your home Wi-Fi details below.
+            </p>
+            <div className="mb-3">
+              <label htmlFor="home-ssid" className="block text-sm font-medium text-gray-700 mb-1">
+                Home Wi-Fi SSID:
+              </label>
+              <input
+                type="text"
+                id="home-ssid"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={homeWifiSsid}
+                onChange={(e) => setHomeWifiSsid(e.target.value)}
+                placeholder="Your Home Wi-Fi Name"
+              />
+            </div>
+            <div className="mb-4">
+              <label htmlFor="home-password" className="block text-sm font-medium text-gray-700 mb-1">
+                Home Wi-Fi Password:
+              </label>
+              <input
+                type="password"
+                id="home-password"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={homeWifiPassword}
+                onChange={(e) => setHomeWifiPassword(e.target.value)}
+                placeholder="Your Home Wi-Fi Password"
+              />
+            </div>
+            <button
+              onClick={handleConfigureWifi}
+              className="w-full bg-green-600 text-white py-3 px-6 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-200 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!isConnectedToEsp32 || homeWifiSsid.trim() === ''}
+            >
+              Configure ESP32 Wi-Fi
+            </button>
           </div>
-          <div className="mb-4">
-            <label htmlFor="home-password" className="block text-sm font-medium text-gray-700 mb-1">
-              Home Wi-Fi Password:
-            </label>
-            <input
-              type="password"
-              id="home-password"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
-              value={homeWifiPassword}
-              onChange={(e) => setHomeWifiPassword(e.target.value)}
-              placeholder="Your Home Wi-Fi Password"
-            />
-          </div>
-          <button
-            onClick={handleConfigureWifi}
-            className="w-full bg-green-600 text-white py-3 px-6 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition duration-200 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!isConnectedToEsp32 || homeWifiSsid.trim() === ''}
-          >
-            Configure ESP32 Wi-Fi
-          </button>
-        </div>
+        )}
 
         {/* Automatic Redial Configuration */}
         <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
           <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
             Automatic Redial Settings
           </h2>
+          {(lastCallFailed && !autoRedialEnabled) && (
+            <div className="mb-4 p-3 rounded-lg bg-red-100 border border-red-300 text-red-800 font-semibold text-center">
+              Last call failed. Automatic redial has been disabled.
+            </div>
+          )}
           <div className="flex items-center mb-4">
             <input
               type="checkbox"
@@ -243,6 +310,58 @@ const App = () => {
             />
             <p className="text-xs text-gray-500 mt-1">
               Minimum: 10 seconds, Maximum: 84600 seconds (1 day)
+            </p>
+          </div>
+          <div className="mb-4">
+            <label htmlFor="random-delay" className="block text-sm font-medium text-gray-700 mb-1">
+              Random Extra Delay (seconds):
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="number"
+                id="random-delay"
+                className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={redialRandomDelay}
+                onChange={handleRandomDelayChange}
+                min="0"
+                max="86400"
+                step="1"
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'} // Only enabled if connected and in STA mode
+              />
+              <span className="text-xs text-gray-600">(0 = no random delay)</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              For each redial, a random number between 0 and this value is added to the base period.
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Last random value used: <span className="font-mono">{lastRandomDelay}</span> seconds
+            </p>
+          </div>
+          <div className="mb-4">
+            <label htmlFor="max-count" className="block text-sm font-medium text-gray-700 mb-1">
+              Maximum Redial Count:
+            </label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="number"
+                id="max-count"
+                className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+                value={redialMaxCount}
+                onChange={handleMaxCountChange}
+                min="0"
+                step="1"
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'} // Only enabled if connected and in STA mode
+              />
+              <span className="text-xs text-gray-600">(0 = infinite)</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Set the maximum number of redial attempts. When reached, automatic redial will stop.
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Current count: <span className="font-mono font-bold">{redialCurrentCount}</span>
+              {redialMaxCount > 0 && (
+                <span> / <span className="font-mono">{redialMaxCount}</span></span>
+              )}
             </p>
           </div>
         </div>
@@ -286,7 +405,7 @@ const App = () => {
         {/* Instructions */}
         <div className="mt-6 text-xs text-gray-500 text-center">
           <p>Initially, connect your phone to the ESP32's Wi-Fi AP named "REMOTEHEAD" (no password). Its IP will be 192.168.4.1.</p>
-          <p>Once configured, the ESP32 will connect to your home Wi-Fi. You'll then need to reconnect your phone to your home Wi-Fi and update the ESP32 IP address above to its new IP on your home network (check your router's DHCP client list).</p>
+          <p>Once configured, the ESP32 will connect to your home Wi-Fi. You'll then need to reconnect your phone to your home Wi-Fi. The ESP32's new IP address will be automatically detected and updated.</p>
           <p>The ESP32 must always be paired with your mobile phone as a Bluetooth headset for redial/dial commands to work.</p>
         </div>
       </div>

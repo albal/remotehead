@@ -1,61 +1,53 @@
-# ESP32 Remotehead Unit Tests
+# Unit Testing for remotehead (ESP32)
 
-This directory contains the unit test suite for the ESP32 Remotehead application.
+## How to Build and Run Tests
 
-## Running Tests Locally
+The test project is separate from the main firmware build. To run the unit tests:
 
-### Prerequisites
+1. **Navigate to the test directory:**
+   ```sh
+   cd test
+   ```
 
-1. ESP-IDF v5.1 or later installed
-2. ESP-IDF environment sourced (`get_idf` or `. $HOME/esp/esp-idf/export.sh`)
+2. **Build the test project:**
+   ```sh
+   idf.py build
+   ```
 
-### Build and Run Tests
+3. **Flash and run the tests on your ESP32:**
+   ```sh
+   idf.py flash monitor
+   ```
 
-```bash
-# Navigate to test directory
-cd test
+   The test runner will execute all tests and print results to the serial monitor.
 
-# Build the test project
+---
+
+## How to Build the Main Firmware
+
+From the project root directory:
+
+```sh
 idf.py build
-
-# Flash and monitor (if you have ESP32 hardware)
 idf.py flash monitor
-
-# Or run in QEMU simulator (if available)
-idf.py qemu
 ```
+
+This will build and flash the main application, not the tests.
+
+---
 
 ## Test Structure
 
-The tests are organized in the `components/main_test/` directory:
+The tests are organized in the `test/main/` directory:
 
 - `test_main.c` - Main test runner
-- `test_utils.c` - Tests for utility functions
-- `test_http_handlers.c` - Tests for HTTP request handlers
-- `test_nvs_utils.c` - Tests for NVS storage operations
+- `test_utils.c` - Tests for utility functions like `url_decode`
+- `test_http_handlers.c` - Mock tests for HTTP request handlers
+- `test_nvs_utils.c` - Mock tests for NVS storage operations
 - `test_utils.h` - Header with test function declarations
 
-## Test Coverage
+## Notes
 
-The tests cover:
-
-### HTTP Handlers
-- JSON response generation
-- Request parameter parsing
-- Configuration validation
-- Error handling
-
-### NVS Operations
-- WiFi credential storage/retrieval
-- Auto-redial settings persistence
-- Error handling for missing data
-
-### Utilities
-- WiFi mode string conversion
-- Phone number validation
-- JSON validation
-- Status response generation
-
-## CI/CD Integration
-
-Tests are automatically run on pull requests through GitHub Actions in the `test-firmware.yml` workflow.
+- The test project is isolated from the main firmware. Tests are run from the `test` directory.
+- Current tests include actual testing of the `url_decode` function and mock tests for other components.
+- See `docs/TESTING.md` for more details on test structure and coverage.
