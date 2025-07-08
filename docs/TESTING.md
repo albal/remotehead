@@ -48,7 +48,7 @@ idf.py qemu
 Tests are automatically run on pull requests through GitHub Actions. The workflow:
 
 1. Sets up ESP-IDF environment
-2. Builds the test project 
+2. Builds the test project
 3. Performs code quality checks
 4. Ensures main project still builds with test infrastructure
 
@@ -57,17 +57,20 @@ Tests are automatically run on pull requests through GitHub Actions. The workflo
 The tests focus on business logic that can be tested without hardware dependencies:
 
 ### HTTP Handlers
+
 - JSON response generation
 - Request parameter parsing
 - Configuration validation
 - Error handling
 
 ### NVS Operations
+
 - WiFi credential storage/retrieval
 - Auto-redial settings persistence
 - Error handling for missing data
 
 ### Utilities
+
 - WiFi mode string conversion
 - Phone number validation
 - JSON validation
@@ -111,3 +114,7 @@ void test_new_function_works_correctly(void) {
 - Expand test coverage for Bluetooth functionality
 - Add performance benchmarks
 - Add automated test result reporting
+
+## Additional Resources
+
+For detailed instructions on building and running tests, refer to the `README.md` file in the `components/main_test/` directory.
