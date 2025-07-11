@@ -1,1 +1,491 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"/><link rel="icon" href="/favicon.ico"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#000000"/><meta name="description" content="ESP32 Redialer Web UI"/><link rel="apple-touch-icon" href="/logo192.png"/><link rel="manifest" href="/manifest.json"/><title>ESP32 Redialer</title><script defer="defer" src="/static/js/main.26bb06d0.js"></script><link href="/static/css/main.3af2f365.css" rel="stylesheet"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 RemoteHead Control</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #4a5568;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .feature-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
+            transition: transform 0.2s ease;
+        }
+        .feature-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        .feature-card h3 {
+            color: #495057;
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .status.connected {
+            background: #c6f6d5;
+            color: #2d7d32;
+            border: 2px solid #4caf50;
+        }
+        .status.disconnected {
+            background: #fed7d7;
+            color: #c62828;
+            border: 2px solid #f44336;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            min-width: 120px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        .btn-primary {
+            background: #4299e1;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #3182ce;
+        }
+        .btn-secondary {
+            background: #68d391;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #48bb78;
+        }
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+        .btn-large {
+            padding: 20px 40px;
+            font-size: 18px;
+            border-radius: 12px;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #495057;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .audio-streaming {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+        }
+        .audio-streaming h2 {
+            margin-top: 0;
+            font-size: 2em;
+        }
+        .audio-streaming p {
+            font-size: 1.2em;
+            margin-bottom: 20px;
+        }
+        .info-section {
+            background: #e6fffa;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #38b2ac;
+        }
+        .log {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            border: 1px solid #e2e8f0;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        .log-entry.info {
+            color: #2d7d32;
+        }
+        .log-entry.error {
+            color: #c62828;
+        }
+        .log-entry.warning {
+            color: #ed8936;
+        }
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎧 RemoteHead Control Center</h1>
+        
+        <!-- Audio Streaming Feature Highlight -->
+        <div class="audio-streaming">
+            <h2>🔊 Real-time Audio Streaming</h2>
+            <p>Experience live phone call audio streaming directly in your browser!</p>
+            <a href="audio_streaming.html" class="btn btn-large btn-secondary">
+                🎵 Launch Audio Streaming
+            </a>
+        </div>
+        
+        <!-- System Status -->
+        <div class="feature-card">
+            <h3>📡 System Status</h3>
+            <div id="bluetoothStatus" class="status disconnected">
+                Bluetooth: Checking...
+            </div>
+            <div id="wifiStatus" class="status disconnected">
+                WiFi: Checking...
+            </div>
+            <div id="audioStatus" class="status disconnected">
+                Audio Streaming: Not Active
+            </div>
+        </div>
+        
+        <!-- Feature Grid -->
+        <div class="feature-grid">
+            <!-- Call Controls -->
+            <div class="feature-card">
+                <h3>📞 Call Controls</h3>
+                <div class="controls">
+                    <button id="redialBtn" class="btn btn-primary">Redial</button>
+                    <button id="dialBtn" class="btn btn-secondary">Dial Number</button>
+                </div>
+                <div class="input-group">
+                    <label for="phoneNumber">Phone Number:</label>
+                    <input type="tel" id="phoneNumber" placeholder="Enter phone number">
+                </div>
+            </div>
+            
+            <!-- Auto Redial Settings -->
+            <div class="feature-card">
+                <h3>🔄 Auto Redial</h3>
+                <div class="controls">
+                    <button id="enableRedialBtn" class="btn btn-primary">Enable Auto Redial</button>
+                    <button id="disableRedialBtn" class="btn btn-danger">Disable Auto Redial</button>
+                </div>
+                <div class="input-group">
+                    <label for="redialInterval">Redial Interval (seconds):</label>
+                    <input type="number" id="redialInterval" value="60" min="10" max="3600">
+                </div>
+            </div>
+            
+            <!-- WiFi Configuration -->
+            <div class="feature-card">
+                <h3>📶 WiFi Configuration</h3>
+                <div class="input-group">
+                    <label for="wifiSSID">Network Name (SSID):</label>
+                    <input type="text" id="wifiSSID" placeholder="Enter WiFi SSID">
+                </div>
+                <div class="input-group">
+                    <label for="wifiPassword">Password:</label>
+                    <input type="password" id="wifiPassword" placeholder="Enter WiFi password">
+                </div>
+                <div class="controls">
+                    <button id="configureWifiBtn" class="btn btn-primary">Configure WiFi</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Information Section -->
+        <div class="info-section">
+            <h3>ℹ️ About RemoteHead</h3>
+            <p>RemoteHead is an ESP32-based Bluetooth HFP (Hands-Free Profile) device that allows you to control phone calls remotely via a web interface. The latest version includes real-time audio streaming capabilities.</p>
+            <p><strong>New Features:</strong></p>
+            <ul>
+                <li>🎵 Real-time audio streaming from phone calls to web browser</li>
+                <li>🔊 Web Audio API integration for low-latency playback</li>
+                <li>📊 Audio visualization and monitoring</li>
+                <li>🔧 Advanced buffering and jitter control</li>
+            </ul>
+        </div>
+        
+        <!-- Activity Log -->
+        <div class="log" id="activityLog">
+            <div class="log-entry info">RemoteHead Control Center loaded. Checking system status...</div>
+        </div>
+    </div>
+
+    <script>
+        class RemoteHeadController {
+            constructor() {
+                this.wsConnection = null;
+                this.isAudioStreaming = false;
+                this.statusCheckInterval = null;
+                
+                this.initElements();
+                this.bindEvents();
+                this.startStatusCheck();
+            }
+            
+            initElements() {
+                this.redialBtn = document.getElementById('redialBtn');
+                this.dialBtn = document.getElementById('dialBtn');
+                this.phoneNumber = document.getElementById('phoneNumber');
+                this.enableRedialBtn = document.getElementById('enableRedialBtn');
+                this.disableRedialBtn = document.getElementById('disableRedialBtn');
+                this.redialInterval = document.getElementById('redialInterval');
+                this.configureWifiBtn = document.getElementById('configureWifiBtn');
+                this.wifiSSID = document.getElementById('wifiSSID');
+                this.wifiPassword = document.getElementById('wifiPassword');
+                this.bluetoothStatus = document.getElementById('bluetoothStatus');
+                this.wifiStatus = document.getElementById('wifiStatus');
+                this.audioStatus = document.getElementById('audioStatus');
+                this.activityLog = document.getElementById('activityLog');
+            }
+            
+            bindEvents() {
+                this.redialBtn.addEventListener('click', () => this.redial());
+                this.dialBtn.addEventListener('click', () => this.dialNumber());
+                this.enableRedialBtn.addEventListener('click', () => this.setAutoRedial(true));
+                this.disableRedialBtn.addEventListener('click', () => this.setAutoRedial(false));
+                this.configureWifiBtn.addEventListener('click', () => this.configureWifi());
+                
+                // Allow Enter key to dial number
+                this.phoneNumber.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.dialNumber();
+                    }
+                });
+                
+                // Check for audio streaming WebSocket connection
+                this.checkAudioStreaming();
+            }
+            
+            log(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = `log-entry ${type}`;
+                logEntry.textContent = `[${timestamp}] ${message}`;
+                this.activityLog.appendChild(logEntry);
+                this.activityLog.scrollTop = this.activityLog.scrollHeight;
+            }
+            
+            async makeRequest(url, options = {}) {
+                try {
+                    const response = await fetch(url, options);
+                    return await response.json();
+                } catch (error) {
+                    this.log(`Request failed: ${error.message}`, 'error');
+                    throw error;
+                }
+            }
+            
+            async checkStatus() {
+                try {
+                    const status = await this.makeRequest('/status');
+                    this.updateStatus(status);
+                } catch (error) {
+                    this.log('Failed to check system status', 'error');
+                }
+            }
+            
+            updateStatus(status) {
+                // Update Bluetooth status
+                this.bluetoothStatus.className = status.bluetooth_connected ? 'status connected' : 'status disconnected';
+                this.bluetoothStatus.textContent = status.bluetooth_connected ? 'Bluetooth: Connected' : 'Bluetooth: Disconnected';
+                
+                // Update WiFi status
+                this.wifiStatus.className = status.wifi_mode === 'STA' ? 'status connected' : 'status disconnected';
+                this.wifiStatus.textContent = `WiFi: ${status.wifi_mode} (${status.ip_address})`;
+                
+                // Update control button states
+                const canPerformActions = status.bluetooth_connected && status.wifi_mode === 'STA';
+                this.redialBtn.disabled = !canPerformActions;
+                this.dialBtn.disabled = !canPerformActions;
+                
+                // Update auto redial status
+                if (status.auto_redial_enabled) {
+                    this.log(`Auto redial enabled: ${status.redial_period}s interval`, 'info');
+                }
+            }
+            
+            async redial() {
+                this.log('Sending redial command...');
+                try {
+                    const result = await this.makeRequest('/redial');
+                    this.log(result.message || 'Redial command sent', 'info');
+                } catch (error) {
+                    this.log('Redial failed', 'error');
+                }
+            }
+            
+            async dialNumber() {
+                const number = this.phoneNumber.value.trim();
+                if (!number) {
+                    this.log('Please enter a phone number', 'warning');
+                    return;
+                }
+                
+                this.log(`Dialing ${number}...`);
+                try {
+                    const result = await this.makeRequest(`/dial?number=${encodeURIComponent(number)}`);
+                    this.log(result.message || 'Dial command sent', 'info');
+                } catch (error) {
+                    this.log('Dial failed', 'error');
+                }
+            }
+            
+            async setAutoRedial(enabled) {
+                const interval = parseInt(this.redialInterval.value);
+                if (enabled && (interval < 10 || interval > 3600)) {
+                    this.log('Redial interval must be between 10 and 3600 seconds', 'warning');
+                    return;
+                }
+                
+                this.log(`${enabled ? 'Enabling' : 'Disabling'} auto redial...`);
+                try {
+                    const result = await this.makeRequest('/set_auto_redial', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            enabled: enabled,
+                            period: interval
+                        })
+                    });
+                    this.log(result.message || 'Auto redial settings updated', 'info');
+                } catch (error) {
+                    this.log('Auto redial configuration failed', 'error');
+                }
+            }
+            
+            async configureWifi() {
+                const ssid = this.wifiSSID.value.trim();
+                const password = this.wifiPassword.value.trim();
+                
+                if (!ssid) {
+                    this.log('Please enter a WiFi SSID', 'warning');
+                    return;
+                }
+                
+                this.log(`Configuring WiFi for network: ${ssid}`);
+                try {
+                    const result = await this.makeRequest('/configure_wifi', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ssid: ssid,
+                            password: password
+                        })
+                    });
+                    this.log(result.message || 'WiFi configuration sent', 'info');
+                    this.log('Device will restart to apply WiFi settings', 'info');
+                } catch (error) {
+                    this.log('WiFi configuration failed', 'error');
+                }
+            }
+            
+            checkAudioStreaming() {
+                // Check if audio streaming is available by attempting WebSocket connection
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                const testWs = new WebSocket(wsUrl);
+                
+                testWs.onopen = () => {
+                    this.audioStatus.className = 'status connected';
+                    this.audioStatus.textContent = 'Audio Streaming: Available';
+                    this.log('Audio streaming capability detected', 'info');
+                    testWs.close();
+                };
+                
+                testWs.onerror = () => {
+                    this.audioStatus.className = 'status disconnected';
+                    this.audioStatus.textContent = 'Audio Streaming: Not Available';
+                    this.log('Audio streaming not available', 'warning');
+                };
+            }
+            
+            startStatusCheck() {
+                this.checkStatus();
+                this.statusCheckInterval = setInterval(() => this.checkStatus(), 5000);
+            }
+        }
+        
+        // Initialize the controller when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new RemoteHeadController();
+        });
+    </script>
+</body>
+</html>

@@ -143,6 +143,8 @@ static esp_err_t dial_get_handler(httpd_req_t *req);
 static esp_err_t status_get_handler(httpd_req_t *req);
 static esp_err_t configure_wifi_post_handler(httpd_req_t *req);
 static esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
+static esp_err_t websocket_handler(httpd_req_t *req);
+static void hfp_audio_data_callback(const uint8_t *data, uint32_t len);
 static httpd_handle_t start_webserver(void);
 static void stop_webserver(httpd_handle_t server);
 static void start_wifi_ap(void);
@@ -328,6 +330,57 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
         }
     }
     return;
+}
+
+// --- HFP Audio Data Callback ---
+static void hfp_audio_data_callback(const uint8_t *data, uint32_t len)
+{
+    // This callback is called by the Bluetooth stack with PCM audio data
+    // from the HFP connection. We need to relay this to connected WebSocket clients.
+    
+    if (server == NULL) {
+        return; // No HTTP server running, can't send data
+    }
+    
+    // Check if there are any WebSocket clients connected
+    size_t clients = 0;
+    esp_err_t ret = httpd_get_client_list(server, &clients, NULL);
+    if (ret != ESP_OK || clients == 0) {
+        return; // No clients connected
+    }
+    
+    // Get list of client fds
+    int *client_fds = calloc(clients, sizeof(int));
+    if (client_fds == NULL) {
+        ESP_LOGE_TS(TAG, "Failed to allocate memory for client list");
+        return;
+    }
+    
+    ret = httpd_get_client_list(server, &clients, client_fds);
+    if (ret != ESP_OK) {
+        free(client_fds);
+        return;
+    }
+    
+    // Send audio data to all connected WebSocket clients
+    httpd_ws_frame_t ws_pkt;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    ws_pkt.type = HTTPD_WS_TYPE_BINARY;
+    ws_pkt.payload = (uint8_t*)data;
+    ws_pkt.len = len;
+    
+    for (size_t i = 0; i < clients; i++) {
+        // Check if this client is on the WebSocket endpoint
+        if (httpd_ws_get_fd_info(server, client_fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
+            ret = httpd_ws_send_frame_async(server, client_fds[i], &ws_pkt);
+            if (ret != ESP_OK) {
+                ESP_LOGW_TS(TAG, "Failed to send audio data to WebSocket client %d: %s", 
+                          client_fds[i], esp_err_to_name(ret));
+            }
+        }
+    }
+    
+    free(client_fds);
 }
 
 // --- NVS Functions ---
@@ -793,6 +846,75 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
     }
 }
 
+// --- WebSocket Handler ---
+static esp_err_t websocket_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET) {
+        ESP_LOGI_TS(TAG, "WebSocket handshake requested");
+        return ESP_OK;
+    }
+    
+    // Handle WebSocket frame
+    httpd_ws_frame_t ws_pkt;
+    uint8_t *buf = NULL;
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    
+    // First, get the frame info to determine how much data to read
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE_TS(TAG, "httpd_ws_recv_frame failed to get frame info: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI_TS(TAG, "WebSocket frame len: %d, type: %d", ws_pkt.len, ws_pkt.type);
+    
+    if (ws_pkt.len) {
+        // Allocate buffer for the full frame
+        buf = calloc(1, ws_pkt.len + 1);
+        if (buf == NULL) {
+            ESP_LOGE_TS(TAG, "Failed to allocate memory for WebSocket frame");
+            return ESP_ERR_NO_MEM;
+        }
+        ws_pkt.payload = buf;
+        
+        // Actually receive the frame payload
+        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+        if (ret != ESP_OK) {
+            ESP_LOGE_TS(TAG, "httpd_ws_recv_frame failed to receive frame: %s", esp_err_to_name(ret));
+            free(buf);
+            return ret;
+        }
+    }
+    
+    // Handle different frame types
+    if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
+        ESP_LOGI_TS(TAG, "WebSocket text frame received: %.*s", ws_pkt.len, (char*)ws_pkt.payload);
+        
+        // Echo the text back (for testing)
+        httpd_ws_frame_t response_pkt;
+        memset(&response_pkt, 0, sizeof(httpd_ws_frame_t));
+        response_pkt.type = HTTPD_WS_TYPE_TEXT;
+        response_pkt.payload = ws_pkt.payload;
+        response_pkt.len = ws_pkt.len;
+        
+        ret = httpd_ws_send_frame(req, &response_pkt);
+        if (ret != ESP_OK) {
+            ESP_LOGE_TS(TAG, "httpd_ws_send_frame failed: %s", esp_err_to_name(ret));
+        }
+    } else if (ws_pkt.type == HTTPD_WS_TYPE_BINARY) {
+        ESP_LOGI_TS(TAG, "WebSocket binary frame received: %d bytes", ws_pkt.len);
+        // Binary frames are reserved for audio data from client (if needed)
+    } else if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
+        ESP_LOGI_TS(TAG, "WebSocket connection closed");
+    }
+    
+    if (buf) {
+        free(buf);
+    }
+    
+    return ESP_OK;
+}
+
 // --- Static File Server Handler ---
 static esp_err_t serve_static_file(httpd_req_t *req)
 {
@@ -895,6 +1017,15 @@ static httpd_uri_t set_auto_redial_uri = {
     .user_ctx  = NULL
 };
 
+// WebSocket URI handler for audio streaming
+static httpd_uri_t websocket_uri = {
+    .uri       = "/ws",
+    .method    = HTTP_GET,
+    .handler   = websocket_handler,
+    .user_ctx  = NULL,
+    .is_websocket = true
+};
+
 // New URI handler for serving static files (catch-all)
 static httpd_uri_t static_files_uri = {
     .uri       = "/*", // Matches any URI
@@ -909,7 +1040,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 6; // Increased to accommodate new handler (root is handled by static_files_uri)
+    config.max_uri_handlers = 7; // Increased to accommodate WebSocket handler
     config.stack_size = 8192; // Increase stack size for HTTP server task if needed
     config.recv_wait_timeout = 10; // Increase timeout for receiving data
     config.send_wait_timeout = 10; // Increase timeout for sending data
@@ -924,6 +1055,8 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
         httpd_register_uri_handler(server, &set_auto_redial_uri);
+        // Register WebSocket handler for audio streaming
+        httpd_register_uri_handler(server, &websocket_uri);
         // Register static file handler last as a catch-all
         httpd_register_uri_handler(server, &static_files_uri);
         return server;
@@ -1369,6 +1502,14 @@ void app_main(void)
         ESP_LOGE_TS(TAG, "%s register HFP client callback failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+
+    // Register HFP audio data callback for real-time audio streaming
+    ret = esp_hf_client_register_data_callback(hfp_audio_data_callback);
+    if (ret) {
+        ESP_LOGE_TS(TAG, "%s register HFP audio data callback failed: %s", __func__, esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI_TS(TAG, "HFP audio data callback registered for real-time streaming");
 
     // Load auto redial settings from NVS
     load_auto_redial_settings_from_nvs();
