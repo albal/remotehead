@@ -1504,7 +1504,7 @@ void app_main(void)
     }
 
     // Register HFP audio data callback for real-time audio streaming
-    ret = esp_hf_client_register_data_callback(hfp_audio_data_callback);
+    ret = esp_hf_client_register_data_callback(hfp_audio_data_callback, NULL);
     if (ret) {
         ESP_LOGE_TS(TAG, "%s register HFP audio data callback failed: %s", __func__, esp_err_to_name(ret));
         return;

@@ -35,6 +35,10 @@ const App = () => {
   const [redialMaxCount, setRedialMaxCount] = useState(0); // 0 = infinite
   const [redialCurrentCount, setRedialCurrentCount] = useState(0);
 
+  // New state for mute controls
+  const [micMuted, setMicMuted] = useState(false);
+  const [speakerMuted, setSpeakerMuted] = useState(false);
+
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
     setStatusMessage('Sending command...');
@@ -66,6 +70,8 @@ const App = () => {
           setLastCallFailed(!!data.last_call_failed); // New
           setRedialMaxCount(data.redial_max_count || 0); // New
           setRedialCurrentCount(data.redial_current_count || 0); // New
+          setMicMuted(data.mic_muted || false);
+          setSpeakerMuted(data.speaker_muted || false);
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -98,6 +104,20 @@ const App = () => {
       return;
     }
     sendCommand(`dial?number=${encodeURIComponent(dialNumber.trim())}`);
+  };
+
+  // Handler for muting microphone
+  const handleMicMuteToggle = () => {
+    const newMutedState = !micMuted;
+    setMicMuted(newMutedState);
+    sendCommand('mute_mic', 'POST', { mute: newMutedState });
+  };
+
+  // Handler for muting speaker
+  const handleSpeakerMuteToggle = () => {
+    const newMutedState = !speakerMuted;
+    setSpeakerMuted(newMutedState);
+    sendCommand('mute_speaker', 'POST', { mute: newMutedState });
   };
 
   // Handler for configuring home Wi-Fi
@@ -195,6 +215,68 @@ const App = () => {
         <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
           ESP32 Headset Controller
         </h1>
+
+        {/* Audio Player and Controls */}
+        <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
+          <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
+            Audio Controls
+          </h2>
+          <div className="mb-4">
+            <audio
+              controls
+              autoPlay
+              preload="none"
+              src={isConnectedToEsp32 && esp32WifiMode === 'STA' ? `http://${esp32Ip}/stream` : ''}
+              className="w-full"
+              onLoadStart={() => {
+                setStatusMessage('Audio stream loading...');
+              }}
+              onCanPlay={() => {
+                setStatusMessage('Audio stream ready. Audio will play during active calls.');
+              }}
+              onError={(e) => {
+                if (isConnectedToEsp32 && esp32WifiMode === 'STA') {
+                  setStatusMessage('Audio stream not available. Audio will stream during active calls.');
+                }
+              }}
+            >
+              Your browser does not support the audio element.
+            </audio>
+            <p className="text-xs text-gray-500 mt-2">
+              {isConnectedToEsp32 && esp32WifiMode === 'STA' && isBluetoothConnected
+                ? 'Audio stream is ready. Click play and audio will stream during active calls.'
+                : 'Connect ESP32 to WiFi and pair with phone to enable audio streaming.'}
+            </p>
+          </div>
+          <div className="flex justify-around">
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="mic-mute-checkbox"
+                className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 mr-2"
+                checked={micMuted}
+                onChange={handleMicMuteToggle}
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'}
+              />
+              <label htmlFor="mic-mute-checkbox" className="text-sm font-medium text-gray-700">
+                Mute Microphone
+              </label>
+            </div>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="speaker-mute-checkbox"
+                className="h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 mr-2"
+                checked={speakerMuted}
+                onChange={handleSpeakerMuteToggle}
+                disabled={!isConnectedToEsp32 || esp32WifiMode !== 'STA'}
+              />
+              <label htmlFor="speaker-mute-checkbox" className="text-sm font-medium text-gray-700">
+                Mute Speaker
+              </label>
+            </div>
+          </div>
+        </div>
 
         {/* ESP32 IP Address Input */}
         <div className="mb-4">
@@ -407,6 +489,11 @@ const App = () => {
           <p>Initially, connect your phone to the ESP32's Wi-Fi AP named "REMOTEHEAD" (no password). Its IP will be 192.168.4.1.</p>
           <p>Once configured, the ESP32 will connect to your home Wi-Fi. You'll then need to reconnect your phone to your home Wi-Fi. The ESP32's new IP address will be automatically detected and updated.</p>
           <p>The ESP32 must always be paired with your mobile phone as a Bluetooth headset for redial/dial commands to work.</p>
+        </div>
+
+        {/* Build Timestamp */}
+        <div className="mt-4 text-xs text-gray-400 text-center border-t border-gray-200 pt-3">
+          <p>Build: {process.env.REACT_APP_BUILD_TIME || 'Development'}</p>
         </div>
       </div>
     </div>
