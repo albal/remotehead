@@ -24,6 +24,10 @@ esp_err_t status_get_handler(httpd_req_t *req);
 esp_err_t configure_wifi_post_handler(httpd_req_t *req);
 esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
 esp_err_t serve_static_file(httpd_req_t *req);
+esp_err_t websocket_handler(httpd_req_t *req);
+
+// HFP audio streaming function
+void hfp_audio_data_callback(const uint8_t *data, uint32_t len);
 
 // Utility functions
 void url_decode(char *str);

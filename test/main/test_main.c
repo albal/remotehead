@@ -4,6 +4,7 @@
 #include "test_utils.h"
 #include "test_http_handlers.h"
 #include "test_nvs_utils.h"
+#include "test_audio_streaming.h"
 
 /**
  * @brief Tells the QEMU emulator to exit with a success status code.
@@ -43,6 +44,18 @@ void app_main(void)
     // NVS tests
     RUN_TEST(test_nvs_mock);
     RUN_TEST(test_settings_persistence_mock);
+
+    // Audio streaming tests
+    RUN_TEST(test_websocket_handler_basic);
+    RUN_TEST(test_hfp_audio_data_callback);
+    RUN_TEST(test_audio_callback_registration);
+    RUN_TEST(test_websocket_endpoint_config);
+    RUN_TEST(test_audio_data_format);
+    RUN_TEST(test_audio_buffer_management);
+    RUN_TEST(test_websocket_client_handling);
+    RUN_TEST(test_error_handling);
+    RUN_TEST(test_websocket_frame_types);
+    RUN_TEST(test_audio_streaming_integration);
 
     // UNITY_END() returns the number of failures.
     int failures = UNITY_END();
