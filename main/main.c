@@ -24,6 +24,9 @@
 #include "driver/gpio.h"
 #include "cJSON.h"
 #include "esp_spiffs.h" // For SPIFFS file system
+#include "driver/i2s_std.h"
+#include "hal/i2s_types.h"
+#include "freertos/ringbuf.h"
 
 #define TAG "HFP_REDIAL_API"
 
@@ -81,6 +84,9 @@ wifi_mode_t current_wifi_mode = WIFI_MODE_NULL; // To store current Wi-Fi mode
 esp_netif_t *ap_netif = NULL; // AP network interface handle
 esp_netif_t *sta_netif = NULL; // STA network interface handle
 
+// Bluetooth device address for HFP connection
+esp_bd_addr_t connected_hfp_device = {0};
+
 // Auto Redial Settings
 bool auto_redial_enabled = false;
 bool last_call_failed = false; // New: track last call failure
@@ -100,6 +106,33 @@ esp_timer_handle_t auto_redial_timer;
 // Morse code LED task handle
 TaskHandle_t morse_code_task_handle = NULL;
 
+// Audio streaming and I2S capture
+RingbufHandle_t audio_ring_buffer = NULL;
+#define AUDIO_RING_BUFFER_SIZE (1024 * 16)  // 16KB buffer for audio
+
+// I2S Audio Capture Configuration for PCM hardware interface
+#define I2S_NUM I2S_NUM_0
+#define I2S_SAMPLE_RATE 8000      // HFP typically uses 8kHz
+#define I2S_BUFFER_COUNT 6
+#define I2S_BUFFER_SIZE 1024
+#define I2S_READ_LEN (I2S_BUFFER_SIZE * 2)  // 16-bit samples
+
+// PCM GPIO pin assignments (based on ESP32 Bluetooth PCM configuration)
+#define PCM_BCK_PIN GPIO_NUM_26   // Bit Clock (PCM CLK)
+#define PCM_WS_PIN GPIO_NUM_25    // Word Select/Frame Sync (PCM SYNC)
+#define PCM_DATA_IN_PIN GPIO_NUM_33  // Data Input (PCM DATA IN)
+
+static i2s_chan_handle_t i2s_rx_chan = NULL;
+static TaskHandle_t i2s_audio_task_handle = NULL;
+static bool i2s_audio_capture_running = false;
+static bool speaker_muted = false;
+
+// Function declarations for I2S audio capture
+static esp_err_t init_i2s_pcm_capture(void);
+static esp_err_t start_i2s_audio_capture(void);
+static void stop_i2s_audio_capture(void);
+static void i2s_audio_capture_task(void *param);
+
 // NVS Namespace and Keys
 #define NVS_NAMESPACE "redial_config"
 #define NVS_KEY_SSID "ssid"
@@ -107,7 +140,7 @@ TaskHandle_t morse_code_task_handle = NULL;
 #define NVS_KEY_AUTO_REDIAL_ENABLED "auto_en"
 #define NVS_KEY_REDIAL_PERIOD "redial_period"
 #define NVS_KEY_AUTO_REDIAL_RANDOM "redial_rand"
-#define NVS_KEY_REDIAL_MAX_COUNT "redial_max"
+#define NVS_KEY_REDIAL_MAX "redial_max"
 
 // AP Mode Configuration
 #define AP_SSID "REMOTEHEAD"
@@ -143,6 +176,7 @@ static esp_err_t dial_get_handler(httpd_req_t *req);
 static esp_err_t status_get_handler(httpd_req_t *req);
 static esp_err_t configure_wifi_post_handler(httpd_req_t *req);
 static esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
+static esp_err_t stream_get_handler(httpd_req_t *req);
 static esp_err_t websocket_handler(httpd_req_t *req);
 static void hfp_audio_data_callback(const uint8_t *data, uint32_t len);
 static httpd_handle_t start_webserver(void);
@@ -203,10 +237,14 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
                 ESP_LOGI_TS(TAG, "HFP Client Connected to phone!");
                 is_bluetooth_connected = true;
+                // Store the connected device address for audio connection requests
+                memcpy(connected_hfp_device, param->conn_stat.remote_bda, ESP_BD_ADDR_LEN);
                 update_auto_redial_timer(); // Update timer state
             } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
                 ESP_LOGI_TS(TAG, "HFP Client Disconnected from phone!");
                 is_bluetooth_connected = false;
+                // Clear the device address
+                memset(connected_hfp_device, 0, ESP_BD_ADDR_LEN);
                 update_auto_redial_timer(); // Update timer state
             } else {
                 ESP_LOGE_TS(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
@@ -229,6 +267,20 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
             ESP_LOGI_TS(TAG, "HFP Audio State: %d", param->audio_stat.state);
+            if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_DISCONNECTED) {
+                ESP_LOGI_TS(TAG, "Audio connection disconnected (0) - HFP audio streaming stopped");
+                // Note: Don't stop I2S here, HFP audio comes through callback, not I2S
+            } else if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTING) {
+                ESP_LOGI_TS(TAG, "Audio connection connecting (1)... HFP audio callback should trigger soon");
+            } else if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED) {
+                ESP_LOGI_TS(TAG, "PCM Audio connection established (2) - HFP callback should now receive audio data!");
+                // HFP audio data will come through hfp_audio_data_callback(), not I2S
+            } else if (param->audio_stat.state == ESP_HF_CLIENT_AUDIO_STATE_CONNECTED_MSBC) {
+                ESP_LOGI_TS(TAG, "mSBC Audio connection established (3) - HFP callback should now receive audio data!");
+                // HFP audio data will come through hfp_audio_data_callback(), not I2S
+            } else {
+                ESP_LOGW_TS(TAG, "Unknown audio state: %d", param->audio_stat.state);
+            }
             break;
         case ESP_HF_CLIENT_BVRA_EVT:
             ESP_LOGI_TS(TAG, "Voice recognition event received");
@@ -243,11 +295,49 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
                 ESP_LOGI_TS(TAG, "Outgoing call has been answered and is now active.");
                 g_is_outgoing_call_in_progress = false; // Reset the flag
                 last_call_failed = false;
+                
+                // Add a small delay before attempting audio connection
+                ESP_LOGI_TS(TAG, "Call is active, waiting 500ms before establishing audio connection...");
+                vTaskDelay(pdMS_TO_TICKS(500));
+                
+                // Manually establish audio connection for the active call
+                esp_err_t audio_ret = esp_hf_client_connect_audio(connected_hfp_device);
+                if (audio_ret == ESP_OK) {
+                    ESP_LOGI_TS(TAG, "Audio connection request sent successfully");
+                } else {
+                    ESP_LOGE_TS(TAG, "Failed to request audio connection: %s", esp_err_to_name(audio_ret));
+                }
             } 
+            else if (g_call_status == ESP_HF_CALL_STATUS_CALL_IN_PROGRESS) {
+                // This is an incoming call that became active
+                ESP_LOGI_TS(TAG, "Incoming call is now active.");
+                last_call_failed = false;
+                
+                // Add a small delay before attempting audio connection
+                ESP_LOGI_TS(TAG, "Incoming call active, waiting 500ms before establishing audio connection...");
+                vTaskDelay(pdMS_TO_TICKS(500));
+                
+                // Manually establish audio connection for the active call
+                esp_err_t audio_ret = esp_hf_client_connect_audio(connected_hfp_device);
+                if (audio_ret == ESP_OK) {
+                    ESP_LOGI_TS(TAG, "Audio connection request sent successfully for incoming call");
+                } else {
+                    ESP_LOGE_TS(TAG, "Failed to request audio connection for incoming call: %s", esp_err_to_name(audio_ret));
+                }
+            }
             else if (g_call_status == ESP_HF_CALL_STATUS_NO_CALLS && !g_is_outgoing_call_in_progress) {
                 // This detects when a previously active call has been ended normally by the recipient or user.
                 ESP_LOGI_TS(TAG, "Active call has ended.");
                 last_call_failed = false;
+                
+                // Disconnect audio connection when call ends
+                ESP_LOGI_TS(TAG, "Call ended, disconnecting audio connection...");
+                esp_err_t audio_ret = esp_hf_client_disconnect_audio(connected_hfp_device);
+                if (audio_ret == ESP_OK) {
+                    ESP_LOGI_TS(TAG, "Audio disconnection request sent successfully");
+                } else {
+                    ESP_LOGW_TS(TAG, "Failed to request audio disconnection: %s", esp_err_to_name(audio_ret));
+                }
             }
             break;
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT: {
@@ -338,8 +428,30 @@ static void hfp_audio_data_callback(const uint8_t *data, uint32_t len)
     // This callback is called by the Bluetooth stack with PCM audio data
     // from the HFP connection. We need to relay this to connected WebSocket clients.
     
+    static uint32_t callback_count = 0;
+    static uint32_t total_bytes = 0;
+    callback_count++;
+    total_bytes += len;
+    
+    // Log EVERY callback initially to see if we're getting any at all
+    if (callback_count <= 10 || callback_count % 100 == 0) {
+        ESP_LOGI_TS(TAG, "*** HFP AUDIO CALLBACK #%"PRIu32": received %"PRIu32" bytes (total: %"PRIu32") ***", 
+                   callback_count, len, total_bytes);
+    }
+    
     if (server == NULL) {
+        if (callback_count % 100 == 0) {
+            ESP_LOGW_TS(TAG, "No HTTP server running, can't send audio data (callback #%"PRIu32")", callback_count);
+        }
         return; // No HTTP server running, can't send data
+    }
+    
+    // Also store in ring buffer for debugging
+    if (audio_ring_buffer != NULL && !speaker_muted) {
+        BaseType_t result = xRingbufferSend(audio_ring_buffer, data, len, pdMS_TO_TICKS(10));
+        if (result != pdTRUE && callback_count % 100 == 0) {
+            ESP_LOGW(TAG, "Audio ring buffer full, dropping %"PRIu32" bytes", len);
+        }
     }
     
     // Check if there are any WebSocket clients connected
@@ -492,7 +604,7 @@ static bool load_auto_redial_settings_from_nvs(void) {
     }
 
     // New: Load max count
-    err = nvs_get_u32(nvs_handle, NVS_KEY_REDIAL_MAX_COUNT, &redial_max_count);
+    err = nvs_get_u32(nvs_handle, NVS_KEY_REDIAL_MAX, &redial_max_count);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         redial_max_count = 0; // Default: infinite
     } else if (err != ESP_OK) {
@@ -532,7 +644,7 @@ static void save_auto_redial_settings_to_nvs(bool enabled, uint32_t period, uint
     }
 
     // New: Save max count
-    err = nvs_set_u32(nvs_handle, NVS_KEY_REDIAL_MAX_COUNT, max_count);
+    err = nvs_set_u32(nvs_handle, NVS_KEY_REDIAL_MAX, max_count);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error (%s) writing redial max count to NVS!", esp_err_to_name(err));
     }
@@ -846,6 +958,22 @@ static esp_err_t set_auto_redial_post_handler(httpd_req_t *req)
     }
 }
 
+// Handler for /stream endpoint - Audio streaming status and info
+static esp_err_t stream_get_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "audio_streaming_active", i2s_audio_capture_running);
+    cJSON_AddBoolToObject(root, "bluetooth_connected", is_bluetooth_connected);
+    cJSON_AddStringToObject(root, "websocket_endpoint", "/ws");
+    cJSON_AddStringToObject(root, "audio_format", "PCM 16-bit 8kHz");
+    
+    const char *json_response = cJSON_PrintUnformatted(root);
+    httpd_resp_sendstr(req, json_response);
+    cJSON_Delete(root);
+    free((void*)json_response);
+    return ESP_OK;
+}
+
 // --- WebSocket Handler ---
 static esp_err_t websocket_handler(httpd_req_t *req)
 {
@@ -1017,6 +1145,13 @@ static httpd_uri_t set_auto_redial_uri = {
     .user_ctx  = NULL
 };
 
+static httpd_uri_t stream_uri = {
+    .uri       = "/stream",
+    .method    = HTTP_GET,
+    .handler   = stream_get_handler,
+    .user_ctx  = NULL
+};
+
 // WebSocket URI handler for audio streaming
 static httpd_uri_t websocket_uri = {
     .uri       = "/ws",
@@ -1040,7 +1175,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 7; // Increased to accommodate WebSocket handler
+    config.max_uri_handlers = 8; // Increased to accommodate stream handler
     config.stack_size = 8192; // Increase stack size for HTTP server task if needed
     config.recv_wait_timeout = 10; // Increase timeout for receiving data
     config.send_wait_timeout = 10; // Increase timeout for sending data
@@ -1055,6 +1190,7 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
         httpd_register_uri_handler(server, &set_auto_redial_uri);
+        httpd_register_uri_handler(server, &stream_uri);
         // Register WebSocket handler for audio streaming
         httpd_register_uri_handler(server, &websocket_uri);
         // Register static file handler last as a catch-all
@@ -1427,6 +1563,22 @@ void app_main(void)
         start_wifi_ap();
     }
 
+    // Create audio ring buffer for streaming
+    audio_ring_buffer = xRingbufferCreate(AUDIO_RING_BUFFER_SIZE, RINGBUF_TYPE_BYTEBUF);
+    if (audio_ring_buffer == NULL) {
+        ESP_LOGE_TS(TAG, "Failed to create audio ring buffer");
+    } else {
+        ESP_LOGI_TS(TAG, "Audio ring buffer created successfully (%d bytes)", AUDIO_RING_BUFFER_SIZE);
+    }
+
+    // Initialize I2S for PCM hardware capture
+    esp_err_t i2s_result = init_i2s_pcm_capture();
+    if (i2s_result != ESP_OK) {
+        ESP_LOGE_TS(TAG, "Failed to initialize I2S PCM capture: %s", esp_err_to_name(i2s_result));
+    } else {
+        ESP_LOGI_TS(TAG, "I2S PCM hardware capture system ready");
+    }
+
     // Initialize Bluetooth controller and host
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE)); // Release BLE memory if not used
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -1539,4 +1691,161 @@ void app_main(void)
     );
 
     ESP_LOGI_TS(TAG, "ESP32 HFP Headset Emulator with API initialized.");
+}
+
+// --- I2S Audio Capture Functions ---
+static esp_err_t init_i2s_pcm_capture(void)
+{
+    ESP_LOGI_TS(TAG, "Initializing I2S for PCM audio capture on hardware pins...");
+    
+    // Create I2S channel for receiving PCM data
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    chan_cfg.dma_desc_num = 6;
+    chan_cfg.dma_frame_num = 1024;
+    
+    esp_err_t ret = i2s_new_channel(&chan_cfg, NULL, &i2s_rx_chan);
+    if (ret != ESP_OK) {
+        ESP_LOGE_TS(TAG, "Failed to create I2S RX channel: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Configure I2S for PCM mode (compatible with Bluetooth PCM interface)
+    i2s_std_config_t std_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = PCM_BCK_PIN,
+            .ws = PCM_WS_PIN,
+            .dout = I2S_GPIO_UNUSED,
+            .din = PCM_DATA_IN_PIN,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv = false,
+            },
+        },
+    };
+    
+    ret = i2s_channel_init_std_mode(i2s_rx_chan, &std_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE_TS(TAG, "Failed to init I2S std mode: %s", esp_err_to_name(ret));
+        i2s_del_channel(i2s_rx_chan);
+        i2s_rx_chan = NULL;
+        return ret;
+    }
+    
+    ESP_LOGI_TS(TAG, "I2S PCM capture initialized on pins: BCK=%d, WS=%d, DIN=%d", 
+                PCM_BCK_PIN, PCM_WS_PIN, PCM_DATA_IN_PIN);
+    
+    return ESP_OK;
+}
+
+static void i2s_audio_capture_task(void *param)
+{
+    ESP_LOGI_TS(TAG, "I2S PCM audio capture task started");
+    
+    size_t bytes_read = 0;
+    uint8_t *i2s_read_buffer = malloc(2048);  // Buffer for I2S data
+    if (i2s_read_buffer == NULL) {
+        ESP_LOGE_TS(TAG, "Failed to allocate I2S read buffer");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    uint32_t packet_count = 0;
+    uint32_t total_bytes_captured = 0;
+    
+    // Enable I2S channel
+    esp_err_t ret = i2s_channel_enable(i2s_rx_chan);
+    if (ret != ESP_OK) {
+        ESP_LOGE_TS(TAG, "Failed to enable I2S channel: %s", esp_err_to_name(ret));
+        free(i2s_read_buffer);
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    while (i2s_audio_capture_running) {
+        ret = i2s_channel_read(i2s_rx_chan, i2s_read_buffer, 2048, &bytes_read, pdMS_TO_TICKS(100));
+        
+        if (ret == ESP_OK && bytes_read > 0) {
+            packet_count++;
+            total_bytes_captured += bytes_read;
+            
+            // Log capture progress every 100 packets
+            if (packet_count % 100 == 0) {
+                               ESP_LOGI_TS(TAG, "I2S PCM captured: packet #%"PRIu32", %zu bytes, total: %"PRIu32" bytes", 
+                           packet_count, bytes_read, total_bytes_captured);
+            }
+            
+            // Send to audio ring buffer if not muted
+            if (audio_ring_buffer != NULL && !speaker_muted) {
+                BaseType_t result = xRingbufferSend(audio_ring_buffer, i2s_read_buffer, bytes_read, pdMS_TO_TICKS(10));
+                if (result != pdTRUE) {
+                    ESP_LOGD(TAG, "Audio ring buffer full, dropping %zu bytes", bytes_read);
+                } else {
+                    ESP_LOGD(TAG, "Sent %zu bytes to audio ring buffer", bytes_read);
+                }
+            }
+        } else if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "I2S read error: %s", esp_err_to_name(ret));
+        }
+        
+        // Small delay to prevent watchdog triggers
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    
+    // Disable I2S channel
+    i2s_channel_disable(i2s_rx_chan);
+    
+    free(i2s_read_buffer);
+    ESP_LOGI_TS(TAG, "I2S PCM audio capture task terminated. Total captured: %"PRIu32" bytes", total_bytes_captured);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t start_i2s_audio_capture(void)
+{
+    if (i2s_audio_capture_running) {
+        ESP_LOGW_TS(TAG, "I2S audio capture already running");
+        return ESP_OK;
+    }
+    
+    ESP_LOGI_TS(TAG, "Starting I2S PCM audio capture task...");
+    i2s_audio_capture_running = true;
+    
+    BaseType_t task_created = xTaskCreate(
+        i2s_audio_capture_task,
+        "i2s_pcm_capture",
+        4096,  // Stack size
+        NULL,  // Parameters
+        5,     // Priority
+        &i2s_audio_task_handle
+    );
+    
+    if (task_created != pdTRUE) {
+        ESP_LOGE_TS(TAG, "Failed to create I2S audio capture task");
+        i2s_audio_capture_running = false;
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI_TS(TAG, "I2S PCM audio capture task created successfully");
+    return ESP_OK;
+}
+
+static void stop_i2s_audio_capture(void)
+{
+    if (!i2s_audio_capture_running) {
+        return;
+    }
+    
+    ESP_LOGI_TS(TAG, "Stopping I2S PCM audio capture...");
+    i2s_audio_capture_running = false;
+    
+    if (i2s_audio_task_handle != NULL) {
+        // Wait for task to terminate
+        vTaskDelay(pdMS_TO_TICKS(500));
+        i2s_audio_task_handle = NULL;
+    }
+    
+    ESP_LOGI_TS(TAG, "I2S PCM audio capture stopped");
 }
