@@ -501,4 +501,31 @@ describe('Redial Count Limiting', () => {
       expect(screen.getByText('5')).toBeInTheDocument(); // Just "5"
     });
   });
+
+  describe('Call Audio', () => {
+    test('renders call audio section with start button disabled when Bluetooth disconnected', async () => {
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('Call Audio')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Start Browser Audio')).toBeDisabled();
+    });
+
+    test('enables start button when Bluetooth connected', async () => {
+      fetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          bluetooth_connected: true,
+          wifi_mode: 'STA',
+          ip_address: '192.168.1.50',
+          auto_redial_enabled: false,
+          redial_period: 60,
+        }),
+      });
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('Start Browser Audio')).not.toBeDisabled();
+      });
+    });
+  });
 });

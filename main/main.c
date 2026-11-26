@@ -24,6 +24,7 @@
 #include "driver/gpio.h"
 #include "cJSON.h"
 #include "esp_spiffs.h" // For SPIFFS file system
+#include "audio_bridge.h" // Browser <-> HFP call audio
 
 #define TAG "HFP_REDIAL_API"
 
@@ -201,6 +202,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_CONNECTED) {
                 ESP_LOGI_TS(TAG, "HFP Client Connected to phone!");
                 is_bluetooth_connected = true;
+                audio_bridge_set_peer(param->conn_stat.remote_bda);
                 update_auto_redial_timer(); // Update timer state
             } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
                 ESP_LOGI_TS(TAG, "HFP Client Disconnected from phone!");
@@ -227,6 +229,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             break;
         case ESP_HF_CLIENT_AUDIO_STATE_EVT:
             ESP_LOGI_TS(TAG, "HFP Audio State: %d", param->audio_stat.state);
+            audio_bridge_on_audio_state(param->audio_stat.state);
             break;
         case ESP_HF_CLIENT_BVRA_EVT:
             ESP_LOGI_TS(TAG, "Voice recognition event received");
@@ -909,10 +912,11 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 6; // Increased to accommodate new handler (root is handled by static_files_uri)
+    config.max_uri_handlers = 8; // API handlers + /audio WebSocket + static file catch-all
     config.stack_size = 8192; // Increase stack size for HTTP server task if needed
     config.recv_wait_timeout = 10; // Increase timeout for receiving data
     config.send_wait_timeout = 10; // Increase timeout for sending data
+    config.close_fn = audio_bridge_close_fn; // Lets the audio bridge notice browser disconnects
 
 
     ESP_LOGI_TS(TAG, "Starting web server on port: '%d'", config.server_port);
@@ -924,6 +928,8 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
         httpd_register_uri_handler(server, &set_auto_redial_uri);
+        // Audio WebSocket must be registered before the "/*" catch-all
+        audio_bridge_register_ws(server);
         // Register static file handler last as a catch-all
         httpd_register_uri_handler(server, &static_files_uri);
         return server;
@@ -937,6 +943,7 @@ static void stop_webserver(httpd_handle_t server)
 {
     if (server) {
         ESP_LOGI_TS(TAG, "Stopping web server");
+        audio_bridge_on_server_stop();
         httpd_stop(server);
     }
 }
@@ -1369,6 +1376,9 @@ void app_main(void)
         ESP_LOGE_TS(TAG, "%s register HFP client callback failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+
+    // Route call audio (SCO over HCI) to/from the web browser
+    audio_bridge_init();
 
     // Load auto redial settings from NVS
     load_auto_redial_settings_from_nvs();

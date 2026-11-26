@@ -1,6 +1,7 @@
 import './index.css';
 import './fallback-tailwind.css';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { CallAudio, microphoneSupported } from './callAudio';
 
 // Main App component for the ESP32 Bluetooth Redial Controller
 const App = () => {
@@ -34,6 +35,11 @@ const App = () => {
   // New state for redial count limiting
   const [redialMaxCount, setRedialMaxCount] = useState(0); // 0 = infinite
   const [redialCurrentCount, setRedialCurrentCount] = useState(0);
+
+  // Browser call audio (speaker + microphone over WebSocket)
+  const callAudioRef = useRef(null);
+  const [audioState, setAudioState] = useState(null); // null when browser audio is off
+  const [micMuted, setMicMuted] = useState(false);
 
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
@@ -176,6 +182,39 @@ const App = () => {
       });
     }
   };
+
+  // Handlers for browser call audio
+  const handleStartAudio = async () => {
+    if (callAudioRef.current) return;
+    const audio = new CallAudio({ host: esp32Ip, onChange: setAudioState });
+    callAudioRef.current = audio;
+    setMicMuted(false);
+    setAudioState(audio.state);
+    await audio.start();
+  };
+
+  const handleStopAudio = () => {
+    if (callAudioRef.current) {
+      callAudioRef.current.stop();
+      callAudioRef.current = null;
+    }
+    setAudioState(null);
+  };
+
+  const handleToggleMute = () => {
+    const muted = !micMuted;
+    setMicMuted(muted);
+    if (callAudioRef.current) callAudioRef.current.setMicMuted(muted);
+  };
+
+  const handleAudioCommand = (cmd) => {
+    if (callAudioRef.current) callAudioRef.current.sendCommand(cmd);
+  };
+
+  // Stop audio when the component unmounts
+  useEffect(() => () => {
+    if (callAudioRef.current) callAudioRef.current.stop();
+  }, []);
 
   // Handler for checking ESP32 status
   const checkStatus = useCallback(() => {
@@ -366,6 +405,76 @@ const App = () => {
           </div>
         </div>
 
+
+        {/* Call Audio (browser speaker + microphone) */}
+        <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
+          <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
+            Call Audio
+          </h2>
+          {!audioState ? (
+            <button
+              onClick={handleStartAudio}
+              className="w-full bg-teal-600 text-white py-3 px-6 rounded-lg shadow-md hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 transition duration-200 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!isBluetoothConnected}
+            >
+              Start Browser Audio
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">
+                Audio link: <span className={`px-3 py-1 rounded-full text-xs font-semibold ${audioState.socket === 'open' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{audioState.socket === 'open' ? 'Connected' : audioState.socket === 'connecting' ? 'Connecting...' : 'Disconnected'}</span>
+              </p>
+              <p className="text-sm text-gray-700">
+                Call audio: <span className={`px-3 py-1 rounded-full text-xs font-semibold ${audioState.callAudio ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>{audioState.callAudio ? `Active (${audioState.codec}, ${audioState.sampleRate / 1000} kHz)` : 'No call audio'}</span>
+              </p>
+              <p className="text-sm text-gray-700">
+                Microphone: <span className={`px-3 py-1 rounded-full text-xs font-semibold ${audioState.mic === 'on' ? (micMuted ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800') : 'bg-red-100 text-red-800'}`}>{audioState.mic === 'on' ? (micMuted ? 'Muted' : 'On') : audioState.mic === 'denied' ? 'Blocked' : audioState.mic === 'unsupported' ? 'Unavailable' : 'Off'}</span>
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleAudioCommand('connect_audio')}
+                  className="bg-teal-600 text-white py-2 px-3 rounded-lg text-sm shadow-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={audioState.socket !== 'open' || audioState.callAudio}
+                >
+                  Take Call Audio
+                </button>
+                <button
+                  onClick={() => handleAudioCommand('disconnect_audio')}
+                  className="bg-gray-500 text-white py-2 px-3 rounded-lg text-sm shadow-md hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={audioState.socket !== 'open' || !audioState.callAudio}
+                >
+                  Send Audio to Phone
+                </button>
+                <button
+                  onClick={handleToggleMute}
+                  className="bg-yellow-500 text-white py-2 px-3 rounded-lg text-sm shadow-md hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={audioState.mic !== 'on'}
+                >
+                  {micMuted ? 'Unmute Mic' : 'Mute Mic'}
+                </button>
+                <button
+                  onClick={handleStopAudio}
+                  className="bg-red-600 text-white py-2 px-3 rounded-lg text-sm shadow-md hover:bg-red-700"
+                >
+                  Stop Audio
+                </button>
+              </div>
+              {audioState.error && (
+                <p className="text-xs text-red-700">{audioState.error}</p>
+              )}
+            </div>
+          )}
+          {!microphoneSupported() && (
+            <p className="text-xs text-orange-700 mt-3">
+              Your browser only allows the microphone on secure (HTTPS) pages, so you will hear the call but the other side won't hear you.
+              To fix this in Chrome or Edge, open <span className="font-mono">chrome://flags/#unsafely-treat-insecure-origin-as-secure</span>,
+              add <span className="font-mono">http://{esp32Ip}</span>, enable it and relaunch the browser.
+            </p>
+          )}
+          <p className="text-xs text-gray-500 mt-3">
+            Use headphones to avoid echo. Audio plays here once the phone routes call audio to the RemoteHead headset.
+          </p>
+        </div>
 
         {/* Action Buttons (for Redial/Dial) */}
         <div className="space-y-4 mb-6">
