@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
@@ -526,6 +526,101 @@ describe('Redial Count Limiting', () => {
       await waitFor(() => {
         expect(screen.getByText('Start Browser Audio')).not.toBeDisabled();
       });
+    });
+  });
+  describe('Firmware Update', () => {
+    let xhrInstances;
+    const originalXHR = global.XMLHttpRequest;
+
+    beforeEach(() => {
+      xhrInstances = [];
+      global.XMLHttpRequest = jest.fn(function MockXHR() {
+        this.open = jest.fn();
+        this.setRequestHeader = jest.fn();
+        this.send = jest.fn();
+        this.upload = {};
+        xhrInstances.push(this);
+      });
+      fetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          bluetooth_connected: false,
+          wifi_mode: 'STA',
+          ip_address: '192.168.1.50',
+          auto_redial_enabled: false,
+          redial_period: 60,
+          firmware_version: 'v0.0.23',
+        }),
+      });
+    });
+
+    afterEach(() => {
+      global.XMLHttpRequest = originalXHR;
+    });
+
+    test('shows the running firmware version', async () => {
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('v0.0.23')).toBeInTheDocument();
+      });
+    });
+
+    test('upload button is disabled until a file is chosen', async () => {
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('v0.0.23')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Upload and Install')).toBeDisabled();
+    });
+
+    test('posts the chosen file to /update and reports success', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('v0.0.23')).toBeInTheDocument();
+      });
+
+      const file = new File([new Uint8Array([0xe9, 0, 0, 0])], 'remotehead.bin', { type: 'application/octet-stream' });
+      await user.upload(screen.getByLabelText(/Firmware file/i), file);
+      await user.click(screen.getByText('Upload and Install'));
+
+      expect(xhrInstances).toHaveLength(1);
+      const xhr = xhrInstances[0];
+      expect(xhr.open).toHaveBeenCalledWith('POST', 'http://192.168.1.50/update');
+      expect(xhr.send).toHaveBeenCalledWith(file);
+
+      act(() => xhr.upload.onprogress({ lengthComputable: true, loaded: 1, total: 2 }));
+      await waitFor(() => {
+        expect(screen.getByText('Uploading... 50%')).toBeInTheDocument();
+      });
+
+      xhr.status = 200;
+      xhr.responseText = JSON.stringify({ message: 'Firmware updated. Device is restarting.' });
+      act(() => xhr.onload());
+      await waitFor(() => {
+        expect(screen.getByText(/Firmware updated\. Device is restarting\./)).toBeInTheDocument();
+      });
+    });
+
+    test('shows the error returned by the device', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await waitFor(() => {
+        expect(screen.getByText('v0.0.23')).toBeInTheDocument();
+      });
+
+      const file = new File(['junk'], 'wrong.bin');
+      await user.upload(screen.getByLabelText(/Firmware file/i), file);
+      await user.click(screen.getByText('Upload and Install'));
+
+      const xhr = xhrInstances[0];
+      xhr.status = 400;
+      xhr.responseText = JSON.stringify({ error: 'Not an ESP32 application image.' });
+      act(() => xhr.onload());
+      await waitFor(() => {
+        expect(screen.getByText('Update failed: Not an ESP32 application image.')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Upload and Install')).not.toBeDisabled();
     });
   });
 });

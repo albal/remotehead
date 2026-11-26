@@ -12,11 +12,11 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     # --- Build React Application ---
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: '18' # Use a Node.js version compatible with your React app
 
@@ -59,14 +59,16 @@ jobs:
           # Path to generated binaries (relative to root directory)
           BOOTLOADER_BIN="build/bootloader/bootloader.bin"
           PARTITIONS_BIN="build/partition_table/partition-table.bin"
+          OTADATA_BIN="build/ota_data_initial.bin"
           APP_BIN="build/remotehead.bin"
           SPIFFS_IMG="build/spiffs.bin"
           
           # Define flash offsets based on partitions.csv
           BOOTLOADER_OFFSET="0x1000"
           PARTITIONS_OFFSET="0x8000"
+          OTADATA_OFFSET="0xe000"
           APP_OFFSET="0x10000"
-          SPIFFS_OFFSET="0x190000"
+          SPIFFS_OFFSET="0x390000"
           
           # Create combined flashable image using esptool from ESP-IDF
           python $IDF_PATH/components/esptool_py/esptool/esptool.py --chip esp32 merge_bin \
@@ -76,6 +78,7 @@ jobs:
             --flash_size 4MB \
             ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
             ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
+            ${OTADATA_OFFSET} ${OTADATA_BIN} \
             ${APP_OFFSET} ${APP_BIN} \
             ${SPIFFS_OFFSET} ${SPIFFS_IMG}
           
@@ -84,7 +87,7 @@ jobs:
 
     # --- Upload Build Artifacts ---
     - name: Upload ESP32 binaries
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: esp32-redialer-firmware
         path: |
