@@ -60,14 +60,16 @@ jobs:
           # Path to generated binaries (relative to root directory)
           BOOTLOADER_BIN="build/bootloader/bootloader.bin"
           PARTITIONS_BIN="build/partition_table/partition-table.bin"
+          OTADATA_BIN="build/ota_data_initial.bin"
           APP_BIN="build/remotehead.bin"
           SPIFFS_IMG="build/spiffs.bin"
           
           # Define flash offsets based on partitions.csv
           BOOTLOADER_OFFSET="0x1000"
           PARTITIONS_OFFSET="0x8000"
+          OTADATA_OFFSET="0xe000"
           APP_OFFSET="0x10000"
-          SPIFFS_OFFSET="0x190000"
+          SPIFFS_OFFSET="0x390000"
           
           # Create combined flashable image using esptool from ESP-IDF
           python $IDF_PATH/components/esptool_py/esptool/esptool.py --chip esp32 merge_bin \
@@ -77,6 +79,7 @@ jobs:
             --flash_size 4MB \
             ${BOOTLOADER_OFFSET} ${BOOTLOADER_BIN} \
             ${PARTITIONS_OFFSET} ${PARTITIONS_BIN} \
+            ${OTADATA_OFFSET} ${OTADATA_BIN} \
             ${APP_OFFSET} ${APP_BIN} \
             ${SPIFFS_OFFSET} ${SPIFFS_IMG}
           
@@ -89,6 +92,7 @@ jobs:
         echo "Checking for required firmware files..."
         ls -la build/bootloader/bootloader.bin
         ls -la build/partition_table/partition-table.bin  
+        ls -la build/ota_data_initial.bin
         ls -la build/remotehead.bin
         ls -la build/spiffs.bin
         ls -la flash_image_combined.bin
@@ -101,6 +105,7 @@ jobs:
         cd build
         sha256sum bootloader/bootloader.bin > ../checksums.txt
         sha256sum partition_table/partition-table.bin >> ../checksums.txt
+        sha256sum ota_data_initial.bin >> ../checksums.txt
         sha256sum remotehead.bin >> ../checksums.txt
         sha256sum spiffs.bin >> ../checksums.txt
         cd ..
@@ -117,6 +122,7 @@ jobs:
         gh release upload ${{ github.event.release.tag_name }} \
           build/bootloader/bootloader.bin \
           build/partition_table/partition-table.bin \
+          build/ota_data_initial.bin \
           build/remotehead.bin \
           build/spiffs.bin \
           flash_image_combined.bin#esp32-redialer-${{ github.event.release.tag_name }}-complete.bin \
@@ -144,10 +150,22 @@ jobs:
         esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 write_flash \
           0x1000 bootloader.bin \
           0x8000 partition-table.bin \
+          0xe000 ota_data_initial.bin \
           0x10000 remotehead.bin \
-          0x190000 spiffs.bin
+          0x390000 spiffs.bin
         ```
         
+        ## Option 3: Update over Wi-Fi
+        Devices already running firmware with the dual OTA partition table can be updated without USB.
+        Open the device's web page, go to "Firmware Update" and upload `remotehead.bin`, or run:
+
+        ```bash
+        curl --data-binary @remotehead.bin -H "Content-Type: application/octet-stream" http://<device-ip>/update
+        ```
+
+        This updates the firmware only. If the web interface changed, flash `spiffs.bin` at 0x390000 over USB.
+        Devices on the old single-slot layout need one USB flash with Option 1 first.
+
         ## Notes
         - Replace `/dev/ttyUSB0` with your ESP32's serial port
         - On Windows, use `COM3`, `COM4`, etc.

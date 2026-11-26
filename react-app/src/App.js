@@ -41,6 +41,12 @@ const App = () => {
   const [audioState, setAudioState] = useState(null); // null when browser audio is off
   const [micMuted, setMicMuted] = useState(false);
 
+  // Firmware update over Wi-Fi
+  const [firmwareVersion, setFirmwareVersion] = useState('');
+  const [firmwareFile, setFirmwareFile] = useState(null);
+  const [updateProgress, setUpdateProgress] = useState(null); // null when idle, 0-100 while uploading
+  const [updateMessage, setUpdateMessage] = useState('');
+
   // Function to send commands to the ESP32
   const sendCommand = useCallback(async (endpoint, method = 'GET', body = null) => {
     setStatusMessage('Sending command...');
@@ -72,6 +78,7 @@ const App = () => {
           setLastCallFailed(!!data.last_call_failed); // New
           setRedialMaxCount(data.redial_max_count || 0); // New
           setRedialCurrentCount(data.redial_current_count || 0); // New
+          setFirmwareVersion(data.firmware_version || '');
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -215,6 +222,36 @@ const App = () => {
   useEffect(() => () => {
     if (callAudioRef.current) callAudioRef.current.stop();
   }, []);
+
+  // Upload a firmware image (remotehead.bin) to the ESP32 over Wi-Fi.
+  // XMLHttpRequest is used instead of fetch so upload progress can be shown.
+  const handleFirmwareUpdate = () => {
+    if (!firmwareFile || updateProgress !== null) return;
+    setUpdateProgress(0);
+    setUpdateMessage('Uploading firmware...');
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `http://${esp32Ip}/update`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUpdateProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch (err) { /* non-JSON reply */ }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUpdateMessage(`${data.message || 'Firmware updated.'} The page will reconnect when it is back up.`);
+        setFirmwareFile(null);
+      } else {
+        setUpdateMessage(`Update failed: ${data.error || xhr.statusText || `HTTP ${xhr.status}`}`);
+      }
+      setUpdateProgress(null);
+    };
+    xhr.onerror = () => {
+      setUpdateMessage('Update failed: network error during upload.');
+      setUpdateProgress(null);
+    };
+    xhr.send(firmwareFile);
+  };
 
   // Handler for checking ESP32 status
   const checkStatus = useCallback(() => {
@@ -503,6 +540,47 @@ const App = () => {
               Dial
             </button>
           </div>
+        </div>
+
+        {/* Firmware Update over Wi-Fi */}
+        <div className="bg-gray-50 p-6 rounded-lg mb-6 border border-gray-200">
+          <h2 className="text-xl font-bold text-gray-700 mb-4 text-center">
+            Firmware Update
+          </h2>
+          <p className="text-sm text-gray-700 mb-3">
+            Current version: <span className="font-mono">{firmwareVersion || 'unknown'}</span>
+          </p>
+          <label htmlFor="firmware-file" className="block text-sm font-medium text-gray-700 mb-1">
+            Firmware file (remotehead.bin):
+          </label>
+          <input
+            type="file"
+            id="firmware-file"
+            accept=".bin,application/octet-stream"
+            className="w-full text-sm text-gray-700 mb-3"
+            onChange={(e) => setFirmwareFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+            disabled={updateProgress !== null}
+          />
+          <button
+            onClick={handleFirmwareUpdate}
+            className="w-full bg-indigo-600 text-white py-3 px-6 rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition duration-200 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!isConnectedToEsp32 || !firmwareFile || updateProgress !== null}
+          >
+            {updateProgress !== null ? `Uploading... ${updateProgress}%` : 'Upload and Install'}
+          </button>
+          {updateProgress !== null && (
+            <div className="w-full bg-gray-200 rounded-full h-2 mt-3">
+              <div className="bg-indigo-600 h-2 rounded-full" style={{ width: `${updateProgress}%` }} />
+            </div>
+          )}
+          {updateMessage && (
+            <p className="text-xs text-gray-700 mt-3">{updateMessage}</p>
+          )}
+          <p className="text-xs text-gray-500 mt-3">
+            Use <span className="font-mono">remotehead.bin</span> from the{' '}
+            <a href="https://github.com/albal/remotehead/releases/latest" target="_blank" rel="noopener noreferrer" className="text-indigo-700 underline">latest release</a>, not the complete flash image.
+            Don't power off the device during the update. If the new firmware fails to start, it rolls back to the previous version.
+          </p>
         </div>
 
         {/* Status Message Display */}

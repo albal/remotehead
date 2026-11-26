@@ -1,0 +1,70 @@
+name: Publish Firmware Installer Site
+
+"on":
+  # After a release's firmware has been built and attached
+  workflow_run:
+    workflows: ["Build and Release ESP32 Redialer"]
+    types: [completed]
+  # When the installer page itself changes
+  push:
+    branches:
+      - main
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download latest release firmware
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+        echo "Latest release: $TAG"
+        echo "TAG=$TAG" >> "$GITHUB_ENV"
+        mkdir -p _site/firmware
+        for f in bootloader.bin partition-table.bin remotehead.bin spiffs.bin; do
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D _site/firmware -p "$f"
+        done
+        # Only releases with Wi-Fi update support ship this one
+        gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D _site/firmware -p ota_data_initial.bin \
+          || echo "No ota_data_initial.bin in $TAG (pre-OTA release)"
+        ls -la _site/firmware
+
+    - name: Build installer site
+      run: |
+        cp site/index.html _site/
+        python3 site/build_manifest.py _site/firmware "$TAG" _site/manifest.json
+        cat _site/manifest.json
+
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4

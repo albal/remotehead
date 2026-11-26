@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RemoteHead Firmware Installer</title>
+  <meta name="description" content="Install the latest RemoteHead firmware on an ESP32 from your browser.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      --bg: #f5f6fa;
+      --card: #ffffff;
+      --text: #1d2130;
+      --muted: #5b6275;
+      --border: #e2e5ee;
+      --accent: #4f46e5;
+      --accent-text: #ffffff;
+      --warn-bg: #fff7e6;
+      --warn-border: #f3c969;
+      --code-bg: #eef0f6;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #12141b;
+        --card: #1b1e28;
+        --text: #e7e9f0;
+        --muted: #a0a6b8;
+        --border: #2c3040;
+        --accent: #8b85ff;
+        --accent-text: #12141b;
+        --warn-bg: #2b2414;
+        --warn-border: #7a5d1c;
+        --code-bg: #262a37;
+        color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #12141b; --card: #1b1e28; --text: #e7e9f0; --muted: #a0a6b8;
+      --border: #2c3040; --accent: #8b85ff; --accent-text: #12141b;
+      --warn-bg: #2b2414; --warn-border: #7a5d1c; --code-bg: #262a37;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 40px 16px 64px; }
+    h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+    h2 { font-size: 1.2rem; margin: 0 0 12px; }
+    p { margin: 0 0 12px; }
+    .lede { color: var(--muted); margin-bottom: 28px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .install { text-align: center; }
+    .version { color: var(--muted); font-size: 0.95rem; margin-bottom: 18px; }
+    .version strong { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .btn {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-text);
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 22px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .notice {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      text-align: left;
+    }
+    ol, ul { margin: 0 0 12px; padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9em;
+      background: var(--code-bg);
+      padding: 1px 5px;
+      border-radius: 4px;
+      overflow-wrap: anywhere;
+    }
+    a { color: var(--accent); }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+    footer { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 28px; }
+    esp-web-install-button { --esp-tools-button-color: var(--accent); --esp-tools-button-text-color: var(--accent-text); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>RemoteHead</h1>
+  <p class="lede">Install the latest firmware on your ESP32 straight from this page. No tools to install.</p>
+
+  <section class="card install">
+    <h2>Install latest firmware</h2>
+    <p class="version">Latest release: <strong id="version">loading…</strong></p>
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate" class="btn">Connect &amp; install</button>
+      <div slot="unsupported" class="notice">
+        Your browser can't talk to USB devices. Open this page in <strong>Chrome</strong> or
+        <strong>Edge</strong> on a desktop or laptop computer.
+      </div>
+      <div slot="not-allowed" class="notice">
+        USB access needs a secure page. Open this site over <code>https://</code>.
+      </div>
+    </esp-web-install-button>
+  </section>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol>
+      <li>Plug the ESP32 into this computer with a USB data cable.</li>
+      <li>Click <strong>Connect &amp; install</strong> and pick the device's serial port.</li>
+      <li>When asked whether to erase the device:
+        <ul>
+          <li><strong>Don't erase</strong> keeps your saved Wi-Fi network and Bluetooth phone pairing.</li>
+          <li><strong>Erase</strong> gives a clean start. Afterwards, join the <code>REMOTEHEAD</code> Wi-Fi network and set it up again at <code>http://192.168.4.1</code>.</li>
+        </ul>
+      </li>
+      <li>Wait for the install to finish (about a minute). The device restarts on its own.</li>
+    </ol>
+    <p class="muted">This installs the bootloader, partition table, firmware and web interface, so it also works for devices running older releases.</p>
+  </section>
+
+  <section class="card">
+    <h2>Already set up? Update over Wi-Fi</h2>
+    <p>Devices running a release with Wi-Fi update support can be updated without a cable:</p>
+    <ol>
+      <li><a id="app-download" href="https://github.com/albal/remotehead/releases/latest/download/remotehead.bin">Download <code>remotehead.bin</code></a> from the latest release.</li>
+      <li>Open the device's own web page (its IP address on your network).</li>
+      <li>Under <strong>Firmware Update</strong>, choose the file and press <strong>Upload and Install</strong>.</li>
+    </ol>
+    <p class="muted">A Wi-Fi update replaces the firmware but not the web interface. If a release changes the web interface, install it from this page over USB instead.</p>
+  </section>
+
+  <section class="card">
+    <h2>Trouble connecting?</h2>
+    <ul>
+      <li>No serial port listed? Try another cable, since some are power-only. You may also need the
+        <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers">CP210x</a> or
+        <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html">CH340</a> USB driver.</li>
+      <li>Stuck on "Connecting"? Hold the <strong>BOOT</strong> button on the board while the install starts.</li>
+      <li>Close any other program using the port, such as a serial monitor.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <a href="https://github.com/albal/remotehead">Source on GitHub</a> ·
+    <a href="https://github.com/albal/remotehead/releases">All releases</a>
+  </footer>
+</main>
+<script>
+  fetch('manifest.json', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((m) => {
+      document.getElementById('version').textContent = m.version || 'unknown';
+      if (m.version) {
+        document.getElementById('app-download').href =
+          'https://github.com/albal/remotehead/releases/download/' + encodeURIComponent(m.version) + '/remotehead.bin';
+      }
+    })
+    .catch(() => { document.getElementById('version').textContent = 'unavailable'; });
+</script>
+</body>
+</html>

@@ -25,6 +25,7 @@
 #include "cJSON.h"
 #include "esp_spiffs.h" // For SPIFFS file system
 #include "audio_bridge.h" // Browser <-> HFP call audio
+#include "ota_update.h" // Firmware updates over Wi-Fi
 
 #define TAG "HFP_REDIAL_API"
 
@@ -687,6 +688,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "redial_max_count", redial_max_count); // New
     cJSON_AddNumberToObject(root, "redial_current_count", redial_current_count); // New
 
+    cJSON_AddStringToObject(root, "firmware_version", ota_update_running_version());
+
     cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "Bluetooth connected" : "Bluetooth disconnected");
 
     const char *json_response = cJSON_PrintUnformatted(root);
@@ -912,7 +915,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 8; // API handlers + /audio WebSocket + static file catch-all
+    config.max_uri_handlers = 9; // API handlers + /update + /audio WebSocket + static file catch-all
     config.stack_size = 8192; // Increase stack size for HTTP server task if needed
     config.recv_wait_timeout = 10; // Increase timeout for receiving data
     config.send_wait_timeout = 10; // Increase timeout for sending data
@@ -928,10 +931,14 @@ static httpd_handle_t start_webserver(void)
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
         httpd_register_uri_handler(server, &set_auto_redial_uri);
+        ota_update_register(server); // POST /update: firmware over Wi-Fi
         // Audio WebSocket must be registered before the "/*" catch-all
         audio_bridge_register_ws(server);
         // Register static file handler last as a catch-all
         httpd_register_uri_handler(server, &static_files_uri);
+        // The web server (and so /update) is reachable: confirm a freshly
+        // updated image so the bootloader does not roll it back.
+        ota_update_mark_app_valid();
         return server;
     }
 
