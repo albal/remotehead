@@ -16,7 +16,7 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Build ESP32 firmware
       uses: espressif/esp-idf-ci-action@v1.2.0
