@@ -181,6 +181,33 @@ describe('App Component', () => {
     expect(autoRedialCheckbox).not.toBeDisabled();
   });
 
+  test('hang up button sends /hangup when a call is active', async () => {
+    const user = userEvent.setup();
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        bluetooth_connected: true,
+        wifi_mode: 'STA',
+        ip_address: '192.168.1.100',
+        auto_redial_enabled: false,
+        redial_period: 60,
+        call_active: true,
+        message: 'Hang up command sent'
+      })
+    });
+
+    render(<App />);
+
+    const hangupButton = await screen.findByText('Hang Up Call');
+    expect(hangupButton).not.toBeDisabled();
+
+    await user.click(hangupButton);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('http://192.168.1.100/hangup', expect.anything());
+    });
+  });
+
   test('automatically updates IP address when ESP32 reports new IP in STA mode', async () => {
     // Mock response for STA mode with a specific IP address
     fetch.mockResolvedValue({

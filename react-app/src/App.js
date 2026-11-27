@@ -39,6 +39,7 @@ const App = () => {
   // Browser call audio (speaker + microphone over WebSocket)
   const callAudioRef = useRef(null);
   const [audioState, setAudioState] = useState(null); // null when browser audio is off
+  const [callActive, setCallActive] = useState(false); // phone has a call in progress or ringing
   const [micMuted, setMicMuted] = useState(false);
 
   // Firmware update over Wi-Fi
@@ -79,6 +80,7 @@ const App = () => {
           setRedialMaxCount(data.redial_max_count || 0); // New
           setRedialCurrentCount(data.redial_current_count || 0); // New
           setFirmwareVersion(data.firmware_version || '');
+          setCallActive(!!data.call_active);
           // If ESP32 is in STA mode, update IP to the one reported by ESP32 (if available)
           if (data.wifi_mode === 'STA' && data.ip_address) {
             setEsp32Ip(data.ip_address);
@@ -102,6 +104,12 @@ const App = () => {
   // Handler for the "Redial Last Number" button
   const handleRedial = () => {
     sendCommand('redial');
+  };
+
+  // Handler for the "Hang Up" button
+  const handleHangup = () => {
+    setCallActive(false);
+    sendCommand('hangup');
   };
 
   // Handler for the "Dial Number" button
@@ -496,6 +504,12 @@ const App = () => {
                   Stop Audio
                 </button>
               </div>
+              {audioState.callAudio && audioState.stats && (
+                <p className="text-xs text-gray-500 font-mono">
+                  Buffer {audioState.stats.bufferedMs} ms · underruns {audioState.stats.underruns} ·
+                  dropped {audioState.stats.droppedMs} ms · late callbacks {audioState.stats.lateCallbacks}
+                </p>
+              )}
               {audioState.error && (
                 <p className="text-xs text-red-700">{audioState.error}</p>
               )}
@@ -521,6 +535,14 @@ const App = () => {
             disabled={!isBluetoothConnected || esp32WifiMode !== 'STA'} // Only enable if BT connected AND in STA mode
           >
             Redial Last Number
+          </button>
+
+          <button
+            onClick={handleHangup}
+            className="w-full bg-red-600 text-white py-3 px-6 rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition duration-200 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!isBluetoothConnected}
+          >
+            {callActive ? 'Hang Up Call' : 'Hang Up'}
           </button>
 
           <div className="flex items-center space-x-2">

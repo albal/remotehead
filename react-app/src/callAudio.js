@@ -78,7 +78,12 @@ export class CallAudio {
       codec: 'CVSD',
       mic: 'off', // off | on | denied | unsupported
       error: '',
+      // Diagnostics, refreshed once a second while running
+      stats: { underruns: 0, droppedMs: 0, bufferedMs: 0, lateCallbacks: 0 },
     };
+    this.stats = { underruns: 0, droppedMs: 0, lateCallbacks: 0 };
+    this.statsTimer = null;
+    this.lastProcessTime = 0;
     this._resetBuffers();
   }
 
@@ -116,6 +121,19 @@ export class CallAudio {
 
     await this._startMic();
     this._openSocket();
+    this.statsTimer = setInterval(() => this._publishStats(), 1000);
+  }
+
+  _publishStats() {
+    if (!this.ctx) return;
+    this._set({
+      stats: {
+        underruns: this.stats.underruns,
+        droppedMs: Math.round(this.stats.droppedMs),
+        lateCallbacks: this.stats.lateCallbacks,
+        bufferedMs: Math.round((this.playQueued * 1000) / this.ctx.sampleRate),
+      },
+    });
   }
 
   async _startMic() {
@@ -186,6 +204,7 @@ export class CallAudio {
     const target = (this.ctx.sampleRate * PLAYBACK_TARGET_MS) / 1000;
     while (this.playQueued > max && this.playQueue.length > 1) {
       const dropped = this.playQueue.shift();
+      this.stats.droppedMs += ((dropped.length - this.playOffset) * 1000) / this.ctx.sampleRate;
       this.playQueued -= dropped.length - this.playOffset;
       this.playOffset = 0;
       if (this.playQueued <= target) break;
@@ -193,6 +212,13 @@ export class CallAudio {
   }
 
   _process(e) {
+    // The callback should fire every PROCESSOR_FRAMES samples. If the main thread was busy
+    // and it ran late, the browser may already have played a gap.
+    const now = performance.now();
+    const period = (PROCESSOR_FRAMES * 1000) / this.ctx.sampleRate;
+    if (this.lastProcessTime && now - this.lastProcessTime > period * 2) this.stats.lateCallbacks++;
+    this.lastProcessTime = now;
+
     const out = e.outputBuffer.getChannelData(0);
     this._fillPlayback(out);
     if (this.stream && !this.micMuted && this.state.callAudio && this.ws && this.ws.readyState === 1) {
@@ -218,6 +244,7 @@ export class CallAudio {
     }
     if (written < out.length) {
       out.fill(0, written);
+      if (this.playing) this.stats.underruns++;
       this.playing = false; // underrun: rebuild the jitter buffer
     }
   }
@@ -249,6 +276,8 @@ export class CallAudio {
   }
 
   stop() {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = null;
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;

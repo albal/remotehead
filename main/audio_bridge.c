@@ -19,6 +19,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_system.h"
 #include "cJSON.h"
 
 #define TAG "AUDIO_BRIDGE"
@@ -57,6 +59,26 @@ static volatile uint32_t s_sample_rate = 8000;
 static esp_bd_addr_t s_peer_bda;
 static bool s_have_peer = false;
 
+// --- Diagnostics: logged every STATS_INTERVAL_MS while call audio is up ---
+#define STATS_INTERVAL_MS 5000
+
+typedef struct {
+    uint32_t bt_rx_bytes;        // phone audio received from the Bluetooth stack
+    uint32_t bt_rx_max_gap_us;   // longest gap between incoming SCO callbacks
+    uint32_t spk_overflow_bytes; // phone audio dropped because the WebSocket fell behind
+    uint32_t ws_tx_bytes;
+    uint32_t ws_tx_max_us;       // slowest single WebSocket send
+    uint32_t ws_tx_fail;
+    uint32_t mic_rx_bytes;       // microphone audio received from the browser
+    uint32_t mic_overflow_bytes; // mic audio dropped because the ring was full
+    uint32_t mic_underruns;      // times the mic ring ran dry (phone hears silence)
+    uint32_t bt_tx_bytes;        // audio handed to the stack for the phone
+    uint32_t bt_tx_silence_bytes;
+} audio_stats_t;
+
+static audio_stats_t s_stats;
+static int64_t s_last_rx_us = 0;
+
 // --- Ring buffer helpers (overwrite oldest data when full) ---
 
 static bool ring_alloc(pcm_ring_t *r, size_t size)
@@ -82,12 +104,15 @@ static size_t ring_count(pcm_ring_t *r)
     return c;
 }
 
-static void ring_write(pcm_ring_t *r, const uint8_t *data, size_t len)
+// Returns the number of old bytes overwritten because the ring was full.
+static size_t ring_write(pcm_ring_t *r, const uint8_t *data, size_t len)
 {
+    size_t dropped = 0;
     if (!r->buf || len == 0) {
-        return;
+        return 0;
     }
     if (len > r->size) {
+        dropped = len - r->size;
         data += len - r->size;
         len = r->size;
     }
@@ -97,6 +122,7 @@ static void ring_write(pcm_ring_t *r, const uint8_t *data, size_t len)
         size_t drop = len - free_space;
         r->tail = (r->tail + drop) % r->size;
         r->count -= drop;
+        dropped += drop;
     }
     size_t first = r->size - r->head;
     if (first > len) {
@@ -107,6 +133,7 @@ static void ring_write(pcm_ring_t *r, const uint8_t *data, size_t len)
     r->head = (r->head + len) % r->size;
     r->count += len;
     portEXIT_CRITICAL(&r->lock);
+    return dropped;
 }
 
 static size_t ring_read(pcm_ring_t *r, uint8_t *out, size_t max_len)
@@ -134,8 +161,15 @@ static size_t ring_read(pcm_ring_t *r, uint8_t *out, size_t max_len)
 // Phone -> us. Runs in the Bluetooth stack task: must not block.
 static void hf_incoming_data_cb(const uint8_t *buf, uint32_t len)
 {
+    int64_t now = esp_timer_get_time();
+    if (s_last_rx_us != 0 && (uint32_t)(now - s_last_rx_us) > s_stats.bt_rx_max_gap_us) {
+        s_stats.bt_rx_max_gap_us = (uint32_t)(now - s_last_rx_us);
+    }
+    s_last_rx_us = now;
+    s_stats.bt_rx_bytes += len;
+
     if (s_ws_fd >= 0) {
-        ring_write(&s_spk_ring, buf, len);
+        s_stats.spk_overflow_bytes += ring_write(&s_spk_ring, buf, len);
     }
 
     portENTER_CRITICAL(&s_credit_lock);
@@ -173,11 +207,14 @@ static uint32_t hf_outgoing_data_cb(uint8_t *buf, uint32_t len)
         got = ring_read(&s_mic_ring, buf, len);
         if (got < len) {
             s_mic_primed = false; // underrun: rebuild the jitter buffer
+            s_stats.mic_underruns++;
         }
     }
     if (got < len) {
         memset(buf + got, 0, len - got);
+        s_stats.bt_tx_silence_bytes += len - got;
     }
+    s_stats.bt_tx_bytes += len;
     return len;
 }
 
@@ -217,12 +254,66 @@ static void drop_client(int fd)
     }
 }
 
+static uint64_t idle_run_time_us(int core)
+{
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_TRACE_FACILITY
+    TaskStatus_t st;
+    vTaskGetInfo(xTaskGetIdleTaskHandleForCore(core), &st, pdFALSE, eInvalid);
+    return st.ulRunTimeCounter;
+#else
+    (void)core;
+    return 0;
+#endif
+}
+
+static void log_stats(void)
+{
+    static int64_t last_us = 0;
+    static uint64_t last_idle[2] = { 0, 0 };
+    int64_t now = esp_timer_get_time();
+    if (last_us == 0) {
+        last_us = now;
+        last_idle[0] = idle_run_time_us(0);
+        last_idle[1] = idle_run_time_us(1);
+        return;
+    }
+    if (now - last_us < STATS_INTERVAL_MS * 1000LL) {
+        return;
+    }
+    uint64_t idle0 = idle_run_time_us(0), idle1 = idle_run_time_us(1);
+    uint32_t elapsed = (uint32_t)(now - last_us);
+    audio_stats_t st = s_stats;
+    memset(&s_stats, 0, sizeof(s_stats));
+    last_us = now;
+
+    if (s_audio_connected) {
+        uint32_t expected = (uint32_t)((uint64_t)s_sample_rate * 2 * elapsed / 1000000);
+        ESP_LOGI(TAG, "stats %lums: bt_rx=%lu/%lu B (max gap %lu ms) spk_drop=%lu ws_tx=%lu B (max %lu ms, fail %lu) "
+                 "mic_rx=%lu B mic_drop=%lu mic_underruns=%lu bt_tx=%lu B (silence %lu)",
+                 (unsigned long)(elapsed / 1000),
+                 (unsigned long)st.bt_rx_bytes, (unsigned long)expected,
+                 (unsigned long)(st.bt_rx_max_gap_us / 1000), (unsigned long)st.spk_overflow_bytes,
+                 (unsigned long)st.ws_tx_bytes, (unsigned long)(st.ws_tx_max_us / 1000), (unsigned long)st.ws_tx_fail,
+                 (unsigned long)st.mic_rx_bytes, (unsigned long)st.mic_overflow_bytes, (unsigned long)st.mic_underruns,
+                 (unsigned long)st.bt_tx_bytes, (unsigned long)st.bt_tx_silence_bytes);
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_USE_TRACE_FACILITY
+        ESP_LOGI(TAG, "cpu load: core0 %lu%% core1 %lu%%, free heap %lu B",
+                 (unsigned long)(100 - (idle0 - last_idle[0]) * 100 / elapsed),
+                 (unsigned long)(100 - (idle1 - last_idle[1]) * 100 / elapsed),
+                 (unsigned long)esp_get_free_heap_size());
+#endif
+    }
+    last_idle[0] = idle0;
+    last_idle[1] = idle1;
+}
+
 // All WebSocket sends happen here so text and binary frames never interleave.
 static void audio_ws_tx_task(void *arg)
 {
     static uint8_t chunk[TX_CHUNK_SIZE];
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
+        log_stats();
 
         int fd = s_ws_fd;
         if (fd < 0 || s_server == NULL) {
@@ -239,11 +330,19 @@ static void audio_ws_tx_task(void *arg)
 
         size_t n;
         while ((n = ring_read(&s_spk_ring, chunk, sizeof(chunk))) > 0) {
-            if (ws_send(fd, HTTPD_WS_TYPE_BINARY, chunk, n) != ESP_OK) {
+            int64_t t0 = esp_timer_get_time();
+            esp_err_t err = ws_send(fd, HTTPD_WS_TYPE_BINARY, chunk, n);
+            uint32_t took = (uint32_t)(esp_timer_get_time() - t0);
+            if (took > s_stats.ws_tx_max_us) {
+                s_stats.ws_tx_max_us = took;
+            }
+            if (err != ESP_OK) {
+                s_stats.ws_tx_fail++;
                 ESP_LOGW(TAG, "WebSocket send failed, dropping client fd=%d", fd);
                 drop_client(fd);
                 break;
             }
+            s_stats.ws_tx_bytes += n;
         }
     }
 }
@@ -314,7 +413,8 @@ static esp_err_t ws_audio_handler(httpd_req_t *req)
     if (ret == ESP_OK) {
         if (frame.type == HTTPD_WS_TYPE_BINARY) {
             if (s_audio_connected && httpd_req_to_sockfd(req) == s_ws_fd) {
-                ring_write(&s_mic_ring, buf, frame.len & ~(size_t)1);
+                s_stats.mic_rx_bytes += frame.len;
+                s_stats.mic_overflow_bytes += ring_write(&s_mic_ring, buf, frame.len & ~(size_t)1);
             }
         } else if (frame.type == HTTPD_WS_TYPE_TEXT) {
             buf[frame.len] = '\0';
@@ -346,7 +446,7 @@ void audio_bridge_init(void)
         ESP_LOGE(TAG, "Failed to register HFP data callbacks: %s", esp_err_to_name(err));
         return;
     }
-    xTaskCreatePinnedToCore(audio_ws_tx_task, "audio_ws_tx", 3072, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(audio_ws_tx_task, "audio_ws_tx", 4096, NULL, 5, NULL, 1);
     ESP_LOGI(TAG, "Browser audio bridge ready (WebSocket /audio)");
 }
 
@@ -379,6 +479,7 @@ void audio_bridge_on_audio_state(esp_hf_client_audio_state_t state)
     portENTER_CRITICAL(&s_credit_lock);
     s_out_credit = 0;
     portEXIT_CRITICAL(&s_credit_lock);
+    s_last_rx_us = 0;
     s_state_dirty = true;
     ESP_LOGI(TAG, "Call audio %s (%lu Hz)", s_audio_connected ? "connected" : "disconnected",
              (unsigned long)s_sample_rate);

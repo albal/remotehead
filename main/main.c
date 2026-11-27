@@ -95,6 +95,7 @@ uint32_t redial_current_count = 0; // New: current number of redials made
 // --- HFP Outgoing Call State Tracking ---
 static volatile bool g_is_outgoing_call_in_progress = false; // Tracks outgoing call process
 static volatile esp_hf_call_status_t g_call_status = ESP_HF_CALL_STATUS_NO_CALLS; // Tracks 'call' indicator
+static volatile esp_hf_call_setup_status_t g_call_setup_status = ESP_HF_CALL_SETUP_STATUS_IDLE; // Tracks 'callsetup' indicator
 
 // Timer handle for automatic redial
 esp_timer_handle_t auto_redial_timer;
@@ -142,6 +143,7 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static esp_err_t redial_get_handler(httpd_req_t *req);
 static esp_err_t dial_get_handler(httpd_req_t *req);
+static esp_err_t hangup_get_handler(httpd_req_t *req);
 static esp_err_t status_get_handler(httpd_req_t *req);
 static esp_err_t configure_wifi_post_handler(httpd_req_t *req);
 static esp_err_t set_auto_redial_post_handler(httpd_req_t *req);
@@ -208,6 +210,8 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
             } else if (param->conn_stat.state == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
                 ESP_LOGI_TS(TAG, "HFP Client Disconnected from phone!");
                 is_bluetooth_connected = false;
+                g_call_status = ESP_HF_CALL_STATUS_NO_CALLS;
+                g_call_setup_status = ESP_HF_CALL_SETUP_STATUS_IDLE;
                 update_auto_redial_timer(); // Update timer state
             } else {
                 ESP_LOGE_TS(TAG, "HFP Client Connection failed! State: %d", param->conn_stat.state);
@@ -255,6 +259,7 @@ static void esp_hf_client_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_pa
         case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT: {
             // This event corresponds to the 'callsetup' indicator
             esp_hf_call_setup_status_t call_setup_status = param->call_setup.status;
+            g_call_setup_status = call_setup_status;
             ESP_LOGI_TS(TAG, "Call Setup Indicator status: %d", call_setup_status);
 
             if (call_setup_status == ESP_HF_CALL_SETUP_STATUS_OUTGOING_DIALING ||
@@ -628,6 +633,25 @@ static esp_err_t redial_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// Handler for /hangup endpoint: ends the active call, cancels an outgoing one,
+// or rejects an incoming one (AT+CHUP).
+static esp_err_t hangup_get_handler(httpd_req_t *req)
+{
+    if (!is_bluetooth_connected) {
+        httpd_resp_send_json(req, "{\"error\":\"Bluetooth not connected to phone\"}");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI_TS(TAG, "HTTP: Received /hangup command.");
+    if (esp_hf_client_reject_call() != ESP_OK) {
+        httpd_resp_send_json(req, "{\"error\":\"Failed to send hang up command\"}");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_send_json(req, "{\"message\":\"Hang up command sent\"}");
+    return ESP_OK;
+}
+
 // Handler for /dial?number=<num> endpoint
 static esp_err_t dial_get_handler(httpd_req_t *req)
 {
@@ -689,6 +713,11 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "redial_current_count", redial_current_count); // New
 
     cJSON_AddStringToObject(root, "firmware_version", ota_update_running_version());
+
+    // A call is "active" while it is in progress or being set up (dialling, alerting, ringing).
+    bool call_active = g_call_status == ESP_HF_CALL_STATUS_CALL_IN_PROGRESS ||
+                       g_call_setup_status != ESP_HF_CALL_SETUP_STATUS_IDLE;
+    cJSON_AddBoolToObject(root, "call_active", call_active);
 
     cJSON_AddStringToObject(root, "message", is_bluetooth_connected ? "Bluetooth connected" : "Bluetooth disconnected");
 
@@ -880,6 +909,13 @@ static httpd_uri_t dial_uri = {
     .user_ctx  = NULL
 };
 
+static httpd_uri_t hangup_uri = {
+    .uri       = "/hangup",
+    .method    = HTTP_GET,
+    .handler   = hangup_get_handler,
+    .user_ctx  = NULL
+};
+
 static httpd_uri_t status_uri = {
     .uri       = "/status",
     .method    = HTTP_GET,
@@ -915,7 +951,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 9; // API handlers + /update + /audio WebSocket + static file catch-all
+    config.max_uri_handlers = 10; // API handlers + /update + /audio WebSocket + static file catch-all
     config.stack_size = 8192; // Increase stack size for HTTP server task if needed
     config.recv_wait_timeout = 10; // Increase timeout for receiving data
     config.send_wait_timeout = 10; // Increase timeout for sending data
@@ -928,6 +964,7 @@ static httpd_handle_t start_webserver(void)
         // Register API handlers first so they take precedence
         httpd_register_uri_handler(server, &redial_uri);
         httpd_register_uri_handler(server, &dial_uri);
+        httpd_register_uri_handler(server, &hangup_uri);
         httpd_register_uri_handler(server, &status_uri);
         httpd_register_uri_handler(server, &configure_wifi_uri);
         httpd_register_uri_handler(server, &set_auto_redial_uri);
